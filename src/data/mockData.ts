@@ -51,6 +51,7 @@ export interface NewsItem {
   ticker?: string;
   sentiment: 'positive' | 'negative' | 'neutral';
   summary: string;
+  link?: string;
 }
 
 export interface SocialUser {
