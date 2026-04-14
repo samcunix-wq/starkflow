@@ -1,9 +1,5 @@
 {
-  "buildCommand": "npm ci && NEXT_TURBOPACK=0 npm run build",
+  "buildCommand": "npm install --include=dev && npm run build",
   "outputDirectory": ".next",
-  "framework": "nextjs",
-  "installCommand": "npm ci",
-  "env": {
-    "NEXT_TURBOPACK": "0"
-  }
+  "framework": "nextjs"
 }
