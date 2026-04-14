@@ -16,7 +16,10 @@ export interface Holding {
   totalGainPercent: number;
   peRatio: number;
   dividendYield: number;
+  dividendRate: number;
   exDivDate: string;
+  dividendPaymentDate: string;
+  dividendFrequency: string;
   nextEarningsDate: string;
   sector: string;
 }
@@ -41,6 +44,7 @@ const STORAGE_KEY = 'starkflow_holdings';
 const PP_KEY = 'starkflow_purchasing_power';
 const REALIZED_PL_KEY = 'starkflow_realized_pl';
 const INITIAL_PURCHASING_POWER = 5000;
+const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'TSLA', 'AMZN', 'META', 'JPM', 'V', 'JNJ', 'PG', 'VOO', 'SPY', 'QQQ', 'SCHD', 'VTI', 'VYM', 'HD', 'UNH', 'DIS', 'NFLX', 'KO', 'PEP', 'COST', 'ABBV', 'MRK', 'CVX', 'XOM', 'WMT', 'TMO', 'CSCO', 'ABT', 'AVGO', 'ACN', 'NKE', 'LLY', 'VZ', 'INTC', 'AMD', 'QCOM', 'TXN', 'ADBE', 'CRM', 'ORCL', 'IBM', 'NOW', 'INTU', 'AMAT', 'SBUX', 'PM', 'HON', 'UPS', 'RTX', 'LOW', 'MS', 'GS', 'BLK', 'AXP', 'SPGI', 'MDLZ', 'TGT', 'CAT', 'DE', 'MCD', 'ISRG', 'MDT', 'ZTS', 'SYK', 'BKNG', 'GILD', 'ADP', 'REGN', 'VRTX', 'ADI', 'LRCX', 'MU', 'KLAC', 'AMT', 'CCI', 'PLD', 'EQIX', 'PSA', 'AVB', 'EQR', 'WELL', 'DLR', 'SPG', 'O', 'KIM', 'REG', 'PFE', 'MRNA', 'BION', 'CVS', 'CI', 'HUM', 'CNC', 'MOH', 'ELV', 'HCA', 'THC', 'UHS', 'ABC', 'CAH', 'MCK', 'BDX', 'EW', 'ALGN', 'IDXX', 'IQV', 'INCY', 'TECH', 'RMD', 'STE', 'HOLX', 'WAT', 'DHR', 'BSX', 'GE', 'APH', 'TDG', 'ROK', 'ITW', 'ETN', 'EMR', 'FTV', 'AME', 'DOV', 'FTNT', 'PANW', 'CRWD', 'ZS', 'OKTA', 'NET', 'DDOG', 'SNOW', 'TEAM', 'WDAY', 'HUBS', 'ZM', 'DOCU', 'TWLO', 'SQ', 'SHOP', 'UBER', 'LYFT', 'DASH', 'COIN', 'MSTR', 'HOOD', 'RIVN', 'LCID', 'F', 'GM'];
 
 export function PortfolioProvider({ children }: { children: ReactNode }) {
   const [holdings, setHoldingsState] = useState<Holding[]>([]);
@@ -77,6 +81,22 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
+  const fetchWithTimeout = useCallback(async (url: string, timeout = 15000) => {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    try {
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      if (err.name === 'AbortError') {
+        throw new Error('Request timed out');
+      }
+      throw err;
+    }
+  }, []);
+
   const refreshHoldings = useCallback(async () => {
     if (typeof window === 'undefined') return;
     
@@ -85,25 +105,25 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       const stored = localStorage.getItem(STORAGE_KEY);
       const userHoldings: Holding[] = stored ? JSON.parse(stored) : [];
       
-      if (userHoldings.length > 0) {
-        const symbols = userHoldings.map(h => h.ticker).join(',');
-        const res = await fetch(`/api/stock?symbol=${symbols}&summary=true`);
+      const symbols = DEFAULT_TICKERS.join(',');
+      const userHoldingsJson = encodeURIComponent(JSON.stringify(userHoldings));
+      const res = await fetchWithTimeout(`/api/stock?symbol=${symbols}&summary=true&userHoldings=${userHoldingsJson}`);
+      
+      if (res.ok) {
+        const data = await res.json();
         
-        if (res.ok) {
-          const data = await res.json();
-          if (data.holdings && data.holdings.length > 0) {
-            setHoldings(data.holdings);
-          } else {
-            setHoldings(userHoldings);
-          }
+        if (data.holdings && data.holdings.length > 0) {
+          setHoldings(data.holdings);
         } else {
           setHoldings(userHoldings);
         }
       } else {
-        setHoldings([]);
+        setHoldings(userHoldings);
       }
-    } catch (err) {
-      console.error('Failed to refresh holdings:', err);
+    } catch (err: any) {
+      if (err.message !== 'Request timed out') {
+        console.error('Failed to refresh holdings:', err);
+      }
       const stored = localStorage.getItem(STORAGE_KEY);
       if (stored) {
         setHoldingsState(JSON.parse(stored));
@@ -111,7 +131,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [setHoldings]);
+  }, [fetchWithTimeout, setHoldings]);
 
   useEffect(() => {
     const storedPP = localStorage.getItem(PP_KEY);
@@ -126,38 +146,55 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     
     refreshHoldings();
     
-    const handleStorageChange = () => refreshHoldings();
-    const handlePortfolioUpdate = () => refreshHoldings();
+    const handleStorageChange = () => {
+      refreshHoldings();
+      const storedPP = localStorage.getItem(PP_KEY);
+      if (storedPP) {
+        setPurchasingPowerState(JSON.parse(storedPP));
+      }
+      const storedRealizedPL = localStorage.getItem(REALIZED_PL_KEY);
+      if (storedRealizedPL) {
+        setRealizedPL(JSON.parse(storedRealizedPL));
+      }
+    };
     
-    (window as any).refreshPortfolio = () => refreshHoldings();
+    const handlePortfolioUpdate = (e: Event) => {
+      const customEvent = e as CustomEvent;
+      if (customEvent.detail?.holdings) {
+        setHoldings(customEvent.detail.holdings);
+      } else {
+        refreshHoldings();
+      }
+      const storedPP = localStorage.getItem(PP_KEY);
+      if (storedPP) {
+        setPurchasingPowerState(JSON.parse(storedPP));
+      }
+      const storedRealizedPL = localStorage.getItem(REALIZED_PL_KEY);
+      if (storedRealizedPL) {
+        setRealizedPL(JSON.parse(storedRealizedPL));
+      }
+    };
+    
+    (window as any).refreshPortfolio = () => {
+      refreshHoldings();
+    };
     
     window.addEventListener('storage', handleStorageChange);
     window.addEventListener('portfolio-updated', handlePortfolioUpdate);
     
-    const refreshInterval = setInterval(() => refreshHoldings(), 60000);
+    const refreshInterval = setInterval(() => {
+      refreshHoldings();
+    }, 60000);
     
     return () => {
       window.removeEventListener('storage', handleStorageChange);
       window.removeEventListener('portfolio-updated', handlePortfolioUpdate);
       clearInterval(refreshInterval);
     };
-  }, [refreshHoldings]);
+  }, [refreshHoldings, setHoldings]);
 
   const addHoldingFn = useCallback((newHolding: Holding) => {
-    setHoldingsState(prev => {
-      const existing = prev.find(h => h.ticker === newHolding.ticker);
-      if (existing) {
-        return prev.map(h => {
-          if (h.ticker === newHolding.ticker) {
-            const totalShares = h.shares + newHolding.shares;
-            const totalCost = (h.shares * h.avgCost) + (newHolding.shares * newHolding.avgCost);
-            return { ...h, shares: totalShares, avgCost: totalCost / totalShares };
-          }
-          return h;
-        });
-      }
-      return [...prev, newHolding];
-    });
+    setHoldingsState(prev => addHolding(prev, newHolding));
   }, []);
 
   const sellFromHoldingFn = useCallback((ticker: string, sharesSold: number, price: number) => {
@@ -166,14 +203,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       const realizedGain = (price - existing.avgCost) * sharesSold;
       addRealizedPL(realizedGain);
     }
-    setHoldingsState(prev => prev.map(h => {
-      if (h.ticker === ticker) {
-        const remainingShares = h.shares - sharesSold;
-        if (remainingShares <= 0) return null;
-        return { ...h, shares: remainingShares };
-      }
-      return h;
-    }).filter((h): h is Holding => h !== null));
+    setHoldingsState(prev => sellFromHolding(prev, ticker, sharesSold, price));
   }, [holdings, addRealizedPL]);
 
   const contextValue = useMemo(() => ({
@@ -203,4 +233,43 @@ export function usePortfolio() {
     throw new Error('usePortfolio must be used within a PortfolioProvider');
   }
   return context;
+}
+
+export function addHolding(holdings: Holding[], newHolding: Holding): Holding[] {
+  const existing = holdings.find(h => h.ticker === newHolding.ticker);
+  if (existing) {
+    return holdings.map(h => {
+      if (h.ticker === newHolding.ticker) {
+        const totalShares = h.shares + newHolding.shares;
+        const totalCost = (h.shares * h.avgCost) + (newHolding.shares * newHolding.avgCost);
+        return {
+          ...h,
+          shares: totalShares,
+          avgCost: totalCost / totalShares,
+          totalValue: totalShares * h.currentPrice,
+        };
+      }
+      return h;
+    });
+  }
+  return [...holdings, newHolding];
+}
+
+export function sellFromHolding(holdings: Holding[], ticker: string, sharesSold: number, price: number): Holding[] {
+  return holdings
+    .map(h => {
+      if (h.ticker === ticker) {
+        const remainingShares = h.shares - sharesSold;
+        if (remainingShares <= 0) {
+          return null;
+        }
+        return {
+          ...h,
+          shares: remainingShares,
+          totalValue: remainingShares * price,
+        };
+      }
+      return h;
+    })
+    .filter((h): h is Holding => h !== null);
 }

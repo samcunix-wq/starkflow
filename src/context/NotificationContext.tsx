@@ -1,13 +1,16 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+
+export type NotificationType = 'purchase' | 'sale' | 'dividend' | 'ex_dividend' | 'earnings' | 'price_alert' | 'general';
 
 export interface Notification {
   id: string;
-  type: 'purchase' | 'sale' | 'dividend' | 'ex_dividend' | 'earnings' | 'general' | 'price_alert';
+  type: NotificationType;
   title: string;
   message: string;
   ticker?: string;
+  amount?: number;
   read: boolean;
   createdAt: string;
 }
@@ -15,7 +18,7 @@ export interface Notification {
 interface NotificationContextType {
   notifications: Notification[];
   unreadCount: number;
-  addNotification: (notification: Omit<Notification, 'id' | 'createdAt' | 'read'>) => void;
+  addNotification: (notification: Omit<Notification, 'id' | 'read' | 'createdAt'>) => void;
   markAsRead: (id: string) => void;
   markAllAsRead: () => void;
   clearNotification: (id: string) => void;
@@ -25,6 +28,7 @@ interface NotificationContextType {
 const NotificationContext = createContext<NotificationContextType | undefined>(undefined);
 
 const STORAGE_KEY = 'starkflow_notifications';
+const MAX_NOTIFICATIONS = 50;
 
 export function NotificationProvider({ children }: { children: ReactNode }) {
   const [notifications, setNotifications] = useState<Notification[]>([]);
@@ -32,45 +36,84 @@ export function NotificationProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored) {
-      setNotifications(JSON.parse(stored));
+      try {
+        setNotifications(JSON.parse(stored));
+      } catch (e) {
+        console.error('Failed to parse notifications:', e);
+      }
     }
   }, []);
 
   const saveNotifications = useCallback((newNotifications: Notification[]) => {
-    setNotifications(newNotifications);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(newNotifications));
+    const trimmed = newNotifications.slice(0, MAX_NOTIFICATIONS);
+    setNotifications(trimmed);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
   }, []);
 
-  const addNotification = useCallback((notification: Omit<Notification, 'id' | 'createdAt' | 'read'>) => {
+  const addNotification = useCallback((notification: Omit<Notification, 'id' | 'read' | 'createdAt'>) => {
     const newNotification: Notification = {
       ...notification,
-      id: Date.now().toString(),
-      createdAt: new Date().toISOString(),
+      id: `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       read: false,
+      createdAt: new Date().toISOString(),
     };
-    saveNotifications([newNotification, ...notifications].slice(0, 50));
-  }, [notifications, saveNotifications]);
+    
+    setNotifications(prev => {
+      const updated = [newNotification, ...prev];
+      const trimmed = updated.slice(0, MAX_NOTIFICATIONS);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+      return trimmed;
+    });
+  }, []);
 
   const markAsRead = useCallback((id: string) => {
-    saveNotifications(notifications.map(n => n.id === id ? { ...n, read: true } : n));
-  }, [notifications, saveNotifications]);
+    setNotifications(prev => {
+      const updated = prev.map(n => 
+        n.id === id ? { ...n, read: true } : n
+      );
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
   const markAllAsRead = useCallback(() => {
-    saveNotifications(notifications.map(n => ({ ...n, read: true })));
-  }, [notifications, saveNotifications]);
+    setNotifications(prev => {
+      const updated = prev.map(n => ({ ...n, read: true }));
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
   const clearNotification = useCallback((id: string) => {
-    saveNotifications(notifications.filter(n => n.id !== id));
-  }, [notifications, saveNotifications]);
+    setNotifications(prev => {
+      const updated = prev.filter(n => n.id !== id);
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+      return updated;
+    });
+  }, []);
 
   const clearAll = useCallback(() => {
-    saveNotifications([]);
-  }, [saveNotifications]);
+    setNotifications([]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([]));
+  }, []);
 
-  const unreadCount = notifications.filter(n => !n.read).length;
+  const unreadCount = useMemo(() => 
+    notifications.filter(n => !n.read).length,
+    [notifications]
+  );
+
+  const contextValue = useMemo(() => ({
+    notifications,
+    unreadCount,
+    addNotification,
+    markAsRead,
+    markAllAsRead,
+    clearNotification,
+    clearAll,
+  }), [notifications, unreadCount, addNotification, markAsRead, markAllAsRead, clearNotification, clearAll]);
 
   return (
-    <NotificationContext.Provider value={{ notifications, unreadCount, addNotification, markAsRead, markAllAsRead, clearNotification, clearAll }}>
+    <NotificationContext.Provider value={contextValue}>
       {children}
     </NotificationContext.Provider>
   );

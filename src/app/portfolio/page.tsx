@@ -2,12 +2,19 @@
 
 import { useState, useMemo, useEffect } from 'react';
 import { Download, Search, Plus, X, Loader2, Check, TrendingUp, Pencil } from 'lucide-react';
-import { usePortfolio } from '@/context/PortfolioContext';
+import { usePortfolio, sellFromHolding, addHolding } from '@/context/PortfolioContext';
 import { useNotifications } from '@/context/NotificationContext';
 import { useAuth } from '@/context/AuthContext';
 import { isConfigured, supabase } from '@/lib/supabase';
 import HoldingsTable from '@/components/HoldingsTable';
 import AllocationChart from '@/components/AllocationChart';
+
+interface AssetAllocationItem {
+  sector: string;
+  value: number;
+  percentage: number;
+  color: string;
+}
 
 const SECTOR_COLORS: Record<string, string> = {
   'Technology': '#00BFFF',
@@ -43,10 +50,12 @@ export default function PortfolioPage() {
         const res = await fetch('/api/stock?symbol=^GSPC');
         const data = await res.json();
         if (data.price) {
+          // Calculate YTD return
           const now = new Date();
           const startOfYear = new Date(now.getFullYear(), 0, 1);
           const yearStartPrice = data.price - data.change;
-          const ytdChange = ((data.price - yearStartPrice) / yearStartPrice) * 100;
+          const ytdChange = yearStartPrice > 0 ? ((data.price - yearStartPrice) / yearStartPrice) * 100 : 0;
+          
           setSp500Data({
             price: data.price,
             change: data.change,
@@ -67,124 +76,164 @@ export default function PortfolioPage() {
     [holdings]
   );
 
-  const filteredHoldings = useMemo(() => {
-    if (!searchQuery) return portfolioHoldings;
-    return portfolioHoldings.filter(
-      h => h.ticker.toLowerCase().includes(searchQuery.toLowerCase()) ||
-           h.name.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [portfolioHoldings, searchQuery]);
+  const filteredHoldings = useMemo(() => 
+    portfolioHoldings.filter(
+      (h) =>
+        h.ticker.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        h.name.toLowerCase().includes(searchQuery.toLowerCase())
+    ),
+    [portfolioHoldings, searchQuery]
+  );
 
-  const holdingsValue = portfolioHoldings.reduce((sum, h) => sum + h.totalValue, 0);
-  const totalCost = portfolioHoldings.reduce((sum, h) => sum + (h.shares * h.avgCost), 0);
-  const totalGain = holdingsValue - totalCost;
-  const totalGainPercent = totalCost > 0 ? (totalGain / totalCost) * 100 : 0;
+  const holdingsValue = portfolioHoldings.reduce((acc, h) => acc + h.totalValue, 0);
   const totalValue = holdingsValue + purchasingPower;
+  const totalCost = portfolioHoldings.reduce((acc, h) => acc + (h.shares * h.avgCost), 0);
+  const unrealizedPL = holdingsValue - totalCost;
+  const totalGain = unrealizedPL + realizedPL;
+  const totalGainPercent = totalCost > 0 ? (totalGain / totalCost) * 100 : 0;
 
+  // Calculate YTD return
   const now = new Date();
-  const startOfYear = new Date(now.getFullYear(), 0, 1);
-  const portfolioYTDPercent = totalCost > 0 ? (totalGain / totalCost) * 100 : 0;
+  const yearStart = new Date(now.getFullYear(), 0, 1);
+  const portfolioYTD = portfolioHoldings.reduce((acc, h) => {
+    const yearStartValue = h.shares * h.avgCost;
+    return acc + (h.totalValue - yearStartValue);
+  }, 0);
+  const portfolioYTDPercent = totalCost > 0 ? (portfolioYTD / totalCost) * 100 : 0;
 
-  const allocationData = useMemo(() => {
+  const allocationData = useMemo((): AssetAllocationItem[] => {
     if (portfolioHoldings.length === 0) return [];
     
+    const totalVal = portfolioHoldings.reduce((sum, h) => sum + h.totalValue, 0);
+    if (totalVal === 0) return [];
+    
     const sectorMap = new Map<string, number>();
+    
     portfolioHoldings.forEach(h => {
-      const sector = h.sector || 'Other';
-      sectorMap.set(sector, (sectorMap.get(sector) || 0) + h.totalValue);
+      const currentSector = h.sector || 'Other';
+      const existing = sectorMap.get(currentSector) || 0;
+      sectorMap.set(currentSector, existing + h.totalValue);
     });
-
-    const allocations: any[] = [];
+    
+    const allocations: AssetAllocationItem[] = [];
+    const colors = Object.values(SECTOR_COLORS);
+    let colorIndex = 0;
+    
     sectorMap.forEach((value, sector) => {
       allocations.push({
         sector,
         value,
-        percentage: Math.round((value / holdingsValue) * 100),
-        color: SECTOR_COLORS[sector] || '#6B7280',
+        percentage: Math.round((value / totalVal) * 100),
+        color: SECTOR_COLORS[sector] || colors[colorIndex++ % colors.length],
       });
     });
-
+    
     allocations.sort((a, b) => b.percentage - a.percentage);
-    return allocations.slice(0, 6);
-  }, [portfolioHoldings, holdingsValue]);
+    
+    if (allocations.length > 5) {
+      const top5 = allocations.slice(0, 5);
+      const othersValue = allocations.slice(5).reduce((sum, a) => sum + a.value, 0);
+      top5.push({
+        sector: 'Other',
+        value: othersValue,
+        percentage: Math.round((othersValue / totalVal) * 100),
+        color: '#6B7280',
+      });
+      return top5;
+    }
+    
+    return allocations;
+  }, [portfolioHoldings]);
 
   const handleAddPosition = async () => {
     if (!addForm.symbol || !addForm.shares || !addForm.avgCost) return;
     
     setAddingPosition(true);
-    
     try {
-      const ticker = addForm.symbol.toUpperCase();
-      const shares = parseFloat(addForm.shares);
-      const avgCost = parseFloat(addForm.avgCost);
-      const costBasis = shares * avgCost;
-      
-      if (costBasis > purchasingPower) {
-        alert('Insufficient purchasing power');
-        setAddingPosition(false);
-        return;
-      }
-
-      const res = await fetch(`/api/stock?symbol=${ticker}`);
+      const res = await fetch(`/api/stock?symbol=${addForm.symbol.toUpperCase()}`);
       const data = await res.json();
       
-      const newHolding = {
-        id: Date.now().toString(),
-        ticker,
-        name: data.name || ticker,
-        shares,
-        avgCost,
-        currentPrice: data.price || avgCost,
-        change: data.change || 0,
-        changePercent: data.changePercent || 0,
-        totalValue: shares * (data.price || avgCost),
-        totalGain: (data.price - avgCost) * shares,
-        totalGainPercent: ((data.price - avgCost) / avgCost) * 100,
-        peRatio: data.peRatio || 0,
-        dividendYield: data.dividendYield || 0,
-        exDivDate: '',
-        nextEarningsDate: '',
-        sector: data.sector || 'Other',
-      };
-
-      const existingIndex = holdings.findIndex(h => h.ticker === ticker);
-      let updatedHoldings;
-      
-      if (existingIndex >= 0) {
-        updatedHoldings = [...holdings];
-        const existing = updatedHoldings[existingIndex];
-        const totalShares = existing.shares + shares;
-        const totalCostBasis = (existing.shares * existing.avgCost) + (shares * avgCost);
-        updatedHoldings[existingIndex] = {
-          ...existing,
-          shares: totalShares,
-          avgCost: totalCostBasis / totalShares,
-          currentPrice: newHolding.currentPrice,
-          totalValue: totalShares * newHolding.currentPrice,
-          totalGain: (newHolding.currentPrice - (totalCostBasis / totalShares)) * totalShares,
-          totalGainPercent: ((newHolding.currentPrice - (totalCostBasis / totalShares)) / (totalCostBasis / totalShares)) * 100,
+      if (data.symbol) {
+        const shares = parseFloat(addForm.shares);
+        const avgCost = parseFloat(addForm.avgCost);
+        const currentPrice = data.price;
+        const costBasis = shares * avgCost;
+        
+        const newHolding = {
+          id: data.symbol,
+          ticker: data.symbol,
+          name: data.name,
+          shares,
+          avgCost,
+          currentPrice,
+          change: data.change || 0,
+          changePercent: data.changePercent || 0,
+          totalValue: costBasis,
+          totalGain: 0,
+          totalGainPercent: 0,
+          peRatio: data.peRatio || 0,
+          dividendYield: data.dividendYield || 0,
+          dividendRate: data.dividendRate || 0,
+          exDivDate: data.exDivDate || '-',
+          dividendPaymentDate: data.dividendPaymentDate || '-',
+          dividendFrequency: data.dividendFrequency || 'quarterly',
+          nextEarningsDate: '-',
+          sector: data.sector || 'Other',
         };
-      } else {
-        updatedHoldings = [...holdings, newHolding];
+        
+        setHoldings(addHolding(holdings, newHolding));
+        setPurchasingPower(purchasingPower - costBasis);
+        
+        addNotification({
+          type: 'purchase',
+          title: 'Position Added',
+          message: `Bought ${shares} shares of ${data.symbol} at $${avgCost.toFixed(2)}/share for $${costBasis.toLocaleString()}`,
+          ticker: data.symbol,
+          amount: costBasis,
+        });
+        
+        if (addForm.reason) {
+          const notes = JSON.parse(localStorage.getItem('jarvis_notes') || '[]');
+          const newNote = {
+            id: Date.now().toString(),
+            type: 'trade_reason' as const,
+            content: `Bought ${addForm.shares} shares of ${addForm.symbol.toUpperCase()} - Reason: ${addForm.reason}`,
+            createdAt: new Date().toISOString(),
+          };
+          localStorage.setItem('jarvis_notes', JSON.stringify([...notes, newNote]));
+        }
+        
+        setShowAddModal(false);
+        setAddForm({ symbol: '', shares: '', avgCost: '', reason: '' });
       }
-
-      setHoldings(updatedHoldings);
-      setPurchasingPower(purchasingPower - costBasis);
-      
-      addNotification({
-        type: 'purchase',
-        title: `Bought ${shares} ${ticker}`,
-        message: `$${costBasis.toLocaleString()} at $${avgCost}/share`,
-        ticker,
-      });
-
-      setAddForm({ symbol: '', shares: '', avgCost: '', reason: '' });
-      setShowAddModal(false);
     } catch (err) {
       console.error('Failed to add position:', err);
+    } finally {
+      setAddingPosition(false);
     }
+  };
+
+  const handleSell = (ticker: string, sharesSold: number, price: number) => {
+    const existingHolding = holdings.find(h => h.ticker === ticker);
+    const saleProceeds = sharesSold * price;
+    const costBasis = existingHolding ? existingHolding.avgCost * sharesSold : 0;
+    const pnl = saleProceeds - costBasis;
     
-    setAddingPosition(false);
+    setHoldings(sellFromHolding(holdings, ticker, sharesSold, price));
+    setPurchasingPower(purchasingPower + saleProceeds);
+    
+    addNotification({
+      type: 'sale',
+      title: pnl >= 0 ? 'Position Sold at Profit' : 'Position Sold at Loss',
+      message: `Sold ${sharesSold} shares of ${ticker} at $${price.toFixed(2)}/share for $${saleProceeds.toLocaleString()} (${pnl >= 0 ? '+' : ''}$${pnl.toFixed(2)} ${pnl >= 0 ? 'gain' : 'loss'})`,
+      ticker,
+      amount: saleProceeds,
+    });
+  };
+
+  const handleBuy = (ticker: string) => {
+    setShowAddModal(true);
+    setAddForm({ symbol: ticker, shares: '', avgCost: '', reason: '' });
   };
 
   if (isLoading) {
@@ -203,18 +252,19 @@ export default function PortfolioPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Portfolio</h1>
-          <p className="text-[#6B7280]">Track and analyze your investments</p>
+          <p className="text-[#6B7280]">Track and manage your investments</p>
         </div>
         <div className="flex items-center gap-3">
-          <button
-            onClick={() => {
-              setAddForm({ symbol: '', shares: '', avgCost: '', reason: '' });
-              setShowAddModal(true);
-            }}
-            className="flex items-center gap-2 px-4 py-2 bg-[#10B981] hover:bg-[#059669] rounded-xl text-white font-medium transition-colors"
+          <button 
+            onClick={() => setShowAddModal(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-[#00BFFF] hover:bg-[#00A8E8] rounded-xl text-white font-medium transition-colors"
           >
             <Plus className="w-4 h-4" />
             Add Position
+          </button>
+          <button className="flex items-center gap-2 px-4 py-2 bg-[#12121A] border border-[#1F1F2E] rounded-xl text-[#9CA3AF] hover:text-white transition-colors">
+            <Download className="w-4 h-4" />
+            Export
           </button>
         </div>
       </div>
@@ -260,7 +310,7 @@ export default function PortfolioPage() {
           <p className="text-xs text-[#6B7280]">S&P: {(sp500Data?.changePercent || 0) >= 0 ? '+' : ''}{(sp500Data?.changePercent || 0).toFixed(1)}%</p>
         </div>
       </div>
-
+      
       <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-4 gap-4 mb-8">
         <div className="card p-4">
           <p className="text-xs text-[#6B7280] mb-1">Invested Value</p>
@@ -275,54 +325,62 @@ export default function PortfolioPage() {
           </p>
         </div>
         <div className="card p-4">
-          <p className="text-xs text-[#6B7280] mb-1">Realized P/L</p>
-          <p className={`text-lg font-bold font-mono ${realizedPL >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
-            {realizedPL >= 0 ? '+' : ''}${Math.abs(realizedPL).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+          <p className="text-xs text-[#6B7280] mb-1">vs S&P 500 (YTD)</p>
+          <p className={`text-lg font-bold font-mono ${(portfolioYTDPercent - (sp500Data?.ytdChange || 0)) >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
+            {(portfolioYTDPercent - (sp500Data?.ytdChange || 0)) >= 0 ? '+' : ''}{(portfolioYTDPercent - (sp500Data?.ytdChange || 0)).toFixed(1)}%
           </p>
+          <p className="text-xs text-[#6B7280]">S&P YTD: {(sp500Data?.ytdChange || 0) >= 0 ? '+' : ''}{(sp500Data?.ytdChange || 0).toFixed(1)}%</p>
         </div>
         <div className="card p-4">
           <p className="text-xs text-[#6B7280] mb-1">Positions</p>
           <p className="text-lg font-bold text-white font-mono">{portfolioHoldings.length}</p>
         </div>
       </div>
-      
+
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
         <div className="lg:col-span-2">
           <div className="card p-6">
             <div className="flex items-center justify-between mb-6">
               <h3 className="text-lg font-semibold text-white">All Holdings</h3>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#6B7280]" />
-                <input
-                  type="text"
-                  placeholder="Search holdings..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className="w-48 bg-[#12121A] border border-[#1F1F2E] rounded-xl pl-10 pr-4 py-2 text-sm text-white placeholder-[#6B7280] focus:outline-none focus:border-[#00BFFF] transition-colors"
-                />
+              <div className="flex items-center gap-3">
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#6B7280]" />
+                  <input
+                    type="text"
+                    placeholder="Search holdings..."
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    className="w-48 bg-[#12121A] border border-[#1F1F2E] rounded-xl pl-10 pr-4 py-2 text-sm text-white placeholder-[#6B7280] focus:outline-none focus:border-[#00BFFF] transition-colors"
+                  />
+                </div>
               </div>
             </div>
-            <HoldingsTable holdings={filteredHoldings} showAll />
+            <HoldingsTable holdings={filteredHoldings} showAll onSell={handleSell} onBuy={handleBuy} />
           </div>
         </div>
         <div className="lg:col-span-1">
-          <AllocationChart data={allocationData} />
+          {allocationData.length > 0 ? (
+            <AllocationChart data={allocationData} />
+          ) : (
+            <div className="card p-6">
+              <h3 className="text-lg font-semibold text-white mb-6">Asset Allocation</h3>
+              <div className="flex items-center justify-center h-[200px] text-[#6B7280]">
+                No holdings to display
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
       {showAddModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="card p-6 w-full max-w-md mx-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="card p-6 w-full max-w-md">
             <div className="flex items-center justify-between mb-6">
-              <h3 className="text-lg font-semibold text-white">Add Position</h3>
-              <button
-                onClick={() => setShowAddModal(false)}
-                className="text-[#6B7280] hover:text-white transition-colors"
-              >
+              <h3 className="text-xl font-semibold text-white">Add Position</h3>
+              <button onClick={() => setShowAddModal(false)} className="text-[#6B7280] hover:text-white">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            
             <div className="space-y-4">
               <div>
                 <label className="text-sm text-[#6B7280] mb-2 block">Stock Symbol</label>

@@ -1,24 +1,18 @@
 import { NextResponse } from 'next/server';
 
-export async function GET(request: Request) {
-  return NextResponse.json({
-    holdings: [],
-    purchasingPower: 5000,
-    realizedPL: 0,
-    totalValue: 5000
-  });
-}
-
-export async function POST(request: Request) {
+export async function GET() {
   try {
-    const body = await request.json();
+    if (typeof window === 'undefined') {
+      return NextResponse.json({ holdings: [] });
+    }
     
-    return NextResponse.json({
-      success: true,
-      message: 'Portfolio saved',
-      data: body
-    });
-  } catch (error) {
-    return NextResponse.json({ error: 'Failed to save' }, { status: 500 });
+    const stored = localStorage.getItem('starkflow_holdings');
+    const userHoldings = stored ? JSON.parse(stored) : [];
+    
+    return NextResponse.json({ holdings: userHoldings });
+  } catch (err) {
+    console.error('Error fetching user holdings:', err);
+    const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+    return NextResponse.json({ holdings: [], error: errorMessage }, { status: 500 });
   }
 }

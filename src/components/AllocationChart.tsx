@@ -22,6 +22,7 @@ export default function AllocationChart({ data }: AllocationChartProps) {
               outerRadius={100}
               paddingAngle={4}
               dataKey="percentage"
+              nameKey="sector"
               animationBegin={0}
               animationDuration={800}
               animationEasing="ease-out"
@@ -43,14 +44,17 @@ export default function AllocationChart({ data }: AllocationChartProps) {
               }}
               labelStyle={{ color: '#FFFFFF' }}
               itemStyle={{ color: '#9CA3AF' }}
-              formatter={(value) => [`${value}%`, 'Allocation']}
+              formatter={(value, name, props) => [
+                `${props.payload.percentage}% ($${props.payload.value?.toLocaleString()})`,
+                props.payload.sector
+              ]}
             />
             <Legend
               verticalAlign="middle"
               align="right"
               layout="vertical"
               iconType="circle"
-              formatter={(value) => (
+              formatter={(value, entry) => (
                 <span className="text-sm text-[#9CA3AF]">{value}</span>
               )}
             />

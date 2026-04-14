@@ -40,7 +40,7 @@ export default function DividendsPage() {
     let totalCost = 0;
 
     portfolioHoldings.forEach(h => {
-      const annual = (h.dividendYield || 0) * h.shares;
+      const annual = (h.dividendRate || 0) * h.shares;
       annualIncome += annual;
       totalValue += h.totalValue;
       totalCost += h.shares * h.avgCost;
@@ -69,11 +69,11 @@ export default function DividendsPage() {
     const payments: DividendPayment[] = [];
     
     dividendHoldings.forEach(h => {
-      const frequency = 'quarterly';
-      const payoutsPerYear = 4;
-      const payoutAmount = (h.dividendYield || 0) * h.shares / payoutsPerYear;
+      const frequency = h.dividendFrequency || 'quarterly';
+      const payoutsPerYear = frequency === 'monthly' ? 12 : frequency === 'quarterly' ? 4 : frequency === 'semi-annual' ? 2 : 1;
+      const payoutAmount = (h.dividendRate || 0) * h.shares / payoutsPerYear;
       
-      const displayDate = h.exDivDate;
+      let displayDate = h.dividendPaymentDate || h.exDivDate;
       
       if (displayDate && displayDate !== '-' && displayDate !== 'TBD') {
         const date = new Date(displayDate);
@@ -89,20 +89,19 @@ export default function DividendsPage() {
         }
       }
       
-      if (displayDate && displayDate !== '-' && displayDate !== 'TBD') {
-        for (let i = 1; i < payoutsPerYear && payments.length < 10; i++) {
-          const nextDate = new Date(displayDate);
-          nextDate.setMonth(nextDate.getMonth() + (i * 3));
-          
-          if (nextDate > now && nextDate <= new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000)) {
-            payments.push({
-              date: nextDate.toISOString().split('T')[0],
-              paymentDate: nextDate.toISOString().split('T')[0],
-              amount: payoutAmount,
-              ticker: h.ticker,
-              frequency,
-            });
-          }
+      for (let i = 1; i < payoutsPerYear && payments.length < 10; i++) {
+        const nextDate = new Date(displayDate);
+        const monthsToAdd = frequency === 'monthly' ? 1 : frequency === 'quarterly' ? 3 : frequency === 'semi-annual' ? 6 : 12;
+        nextDate.setMonth(nextDate.getMonth() + (i * monthsToAdd));
+        
+        if (nextDate > now && nextDate <= new Date(now.getTime() + 90 * 24 * 60 * 60 * 1000)) {
+          payments.push({
+            date: nextDate.toISOString().split('T')[0],
+            paymentDate: nextDate.toISOString().split('T')[0],
+            amount: payoutAmount,
+            ticker: h.ticker,
+            frequency,
+          });
         }
       }
     });
@@ -249,8 +248,8 @@ export default function DividendsPage() {
               </thead>
               <tbody>
                 {dividendHoldings.map((holding) => {
-                  const annualIncome = (holding.dividendYield || 0) * holding.shares;
-                  const yieldOnCost = holding.avgCost > 0 ? ((holding.dividendYield || 0) * holding.shares / (holding.shares * holding.avgCost)) * 100 : 0;
+                  const annualIncome = (holding.dividendRate || 0) * holding.shares;
+                  const yieldOnCost = holding.avgCost > 0 ? ((holding.dividendRate || 0) * holding.shares / (holding.shares * holding.avgCost)) * 100 : 0;
                   const isExpanded = expandedRow === holding.ticker;
 
                   return (
@@ -271,8 +270,8 @@ export default function DividendsPage() {
                         <td className="text-right py-4 px-4 text-white font-mono">{yieldOnCost.toFixed(2)}%</td>
                         <td className="text-right py-4 px-4 text-white font-mono">${annualIncome.toFixed(0)}</td>
                         <td className="text-right py-4 px-4 text-white font-mono">{holding.exDivDate || 'N/A'}</td>
-                        <td className="text-right py-4 px-4 text-white font-mono">-</td>
-                        <td className="text-right py-4 px-4 text-[#6B7280] font-mono text-xs">Q</td>
+                        <td className="text-right py-4 px-4 text-white font-mono">{holding.dividendPaymentDate || '-'}</td>
+                        <td className="text-right py-4 px-4 text-[#6B7280] font-mono text-xs">{holding.dividendFrequency || 'Q'}</td>
                         <td className="text-right py-4 px-4">
                           {isExpanded ? <ChevronUp className="w-5 h-5 text-[#6B7280] inline" /> : <ChevronDown className="w-5 h-5 text-[#6B7280] inline" />}
                         </td>
@@ -286,8 +285,8 @@ export default function DividendsPage() {
                                 <p className="text-white font-mono">${holding.currentPrice.toFixed(2)}</p>
                               </div>
                               <div>
-                                <p className="text-xs text-[#6B7280] mb-1">Dividend Yield</p>
-                                <p className="text-white font-mono">{(holding.dividendYield || 0).toFixed(2)}%</p>
+                                <p className="text-xs text-[#6B7280] mb-1">Dividend Rate</p>
+                                <p className="text-white font-mono">${(holding.dividendRate || 0).toFixed(2)}/share</p>
                               </div>
                               <div>
                                 <p className="text-xs text-[#6B7280] mb-1">Cost Basis</p>

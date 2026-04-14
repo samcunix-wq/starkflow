@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useMemo } from 'react';
+import { portfolioSummary, assetAllocation, newsItems } from '@/data/mockData';
 import PortfolioCard from '@/components/PortfolioCard';
 import AllocationChart from '@/components/AllocationChart';
 import HoldingsTable from '@/components/HoldingsTable';
@@ -32,15 +33,6 @@ const SECTOR_COLORS: Record<string, string> = {
   'Other': '#6B7280',
 };
 
-const assetAllocation = [
-  { sector: 'Technology', value: 0, percentage: 0, color: '#00BFFF' },
-  { sector: 'Other', value: 0, percentage: 100, color: '#6B7280' },
-];
-
-const newsItems = [
-  { id: '1', title: 'Market Update', source: 'Financial News', timestamp: new Date().toISOString(), sentiment: 'neutral' as const, summary: 'Loading latest market news...' },
-];
-
 export default function Dashboard() {
   const { holdings, setHoldings, isLoading, purchasingPower, realizedPL, setPurchasingPower } = usePortfolio();
   const { user } = useAuth();
@@ -49,22 +41,6 @@ export default function Dashboard() {
   const [ppLoading, setPpLoading] = useState(false);
   const [userName, setUserName] = useState('there');
   const INDEX_TICKERS = ['^GSPC', '^IXIC', '^DJI', '^RUT', '^VIX', '^TNX'];
-  const portfolioHoldings = useMemo(() => 
-    holdings.filter(h => !INDEX_TICKERS.includes(h.ticker) && !h.ticker.startsWith('^')),
-    [holdings]
-  );
-  
-  const [summary, setSummary] = useState({
-    totalValue: 0,
-    dayPL: 0,
-    dayPLPercent: 0,
-    weekPL: 0,
-    weekPLPercent: 0,
-    allTimePL: 0,
-    allTimePLPercent: 0,
-  });
-  const [marketNews, setMarketNews] = useState<Array<{title: string, source: string, published: string, link: string, summary: string}>>([]);
-  const [portfolioNews, setPortfolioNews] = useState<Array<{title: string, source: string, published: string, symbol: string, link: string}>>([]);
 
   const getGreeting = () => {
     const hour = new Date().getHours();
@@ -83,6 +59,22 @@ export default function Dashboard() {
       setUserName(formattedName);
     }
   }, [user]);
+  const portfolioHoldings = useMemo(() => 
+    holdings.filter(h => !INDEX_TICKERS.includes(h.ticker) && !h.ticker.startsWith('^')),
+    [holdings]
+  );
+  
+  const [summary, setSummary] = useState({
+    totalValue: 0,
+    dayPL: 0,
+    dayPLPercent: 0,
+    weekPL: 0,
+    weekPLPercent: 0,
+    allTimePL: 0,
+    allTimePLPercent: 0,
+  });
+  const [marketNews, setMarketNews] = useState<Array<{title: string, source: string, published: string, link: string, summary: string}>>([]);
+  const [portfolioNews, setPortfolioNews] = useState<Array<{title: string, source: string, published: string, symbol: string, link: string}>>([]);
 
   useEffect(() => {
     async function fetchData() {
@@ -111,19 +103,29 @@ export default function Dashboard() {
 
   useEffect(() => {
     async function fetchNews() {
-      try {
-        const portfolioRes = await fetch(`/api/stock-news?symbol=general&category=market`);
-        const portfolioData = await portfolioRes.json();
-        if (portfolioData.news && portfolioData.news.length > 0) {
-          setMarketNews(portfolioData.news.slice(0, 4));
-        }
-      } catch (err) {
+    try {
+      const symbols = portfolioHoldings.slice(0, 8).map(h => h.ticker);
+      
+      const portfolioRes = await fetch(`/api/stock-news?symbol=${symbols.join(',')}&category=portfolio`);
+      const portfolioData = await portfolioRes.json();
+      if (portfolioData.news && portfolioData.news.length > 0) {
+        setPortfolioNews(portfolioData.news);
+      }
+      
+      const marketRes = await fetch(`/api/stock-news?symbol=general&category=market`);
+      const marketData = await marketRes.json();
+      if (marketData.news && marketData.news.length > 0) {
+        setMarketNews(marketData.news.slice(0, 4));
+      }
+    } catch (err) {
         console.error('Failed to fetch news:', err);
       }
     }
     
-    fetchNews();
-  }, []);
+    if (portfolioHoldings.length > 0) {
+      fetchNews();
+    }
+  }, [portfolioHoldings]);
 
   const allocationData = useMemo((): AssetAllocationItem[] => {
     if (portfolioHoldings.length === 0) return assetAllocation;
@@ -151,7 +153,7 @@ export default function Dashboard() {
         color: SECTOR_COLORS[sector] || colors[colorIndex++ % colors.length],
       });
     });
-
+    
     allocations.sort((a, b) => b.percentage - a.percentage);
     
     if (allocations.length > 5) {
@@ -236,52 +238,66 @@ export default function Dashboard() {
               <h3 className="text-lg font-semibold text-white">Top Holdings</h3>
               <span className="text-sm text-[#6B7280]">By value</span>
             </div>
-            {sortedTopHoldings.length > 0 ? (
-              <div className="space-y-3">
-                {sortedTopHoldings.map((holding) => (
-                  <div key={holding.ticker} className="flex items-center justify-between p-3 bg-[#12121A] rounded-xl">
-                    <div className="flex items-center gap-3">
-                      <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00BFFF]/20 to-[#006699]/20 flex items-center justify-center">
-                        <span className="text-sm font-bold text-[#00BFFF]">{holding.ticker.substring(0, 2)}</span>
-                      </div>
-                      <div>
-                        <p className="text-white font-medium">{holding.ticker}</p>
-                        <p className="text-xs text-[#6B7280]">{holding.shares} shares</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className="text-white font-medium font-mono">${holding.totalValue.toLocaleString()}</p>
-                      <p className={`text-xs font-mono ${holding.totalGain >= 0 ? 'text-[#10B981]' : 'text-[#EF4444]'}`}>
-                        {holding.totalGain >= 0 ? '+' : ''}{holding.totalGainPercent.toFixed(2)}%
-                      </p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <div className="text-center py-8">
-                <p className="text-[#6B7280]">No holdings yet</p>
-                <p className="text-xs text-[#6B7280]">Add your first position to get started</p>
+            <HoldingsTable holdings={sortedTopHoldings} />
+            {portfolioHoldings.length > 5 && (
+              <div className="mt-4 pt-4 border-t border-[#1F1F2E]">
+                <a 
+                  href="/portfolio" 
+                  className="flex items-center justify-center gap-2 text-[#00BFFF] hover:text-[#00A8E8] transition-colors font-medium"
+                >
+                  Show more ({portfolioHoldings.length - 5} more)
+                </a>
               </div>
             )}
           </div>
         </div>
       </div>
 
+      <div className="mb-8">
+        <h2 className="text-2xl font-bold text-white mb-4 flex items-center gap-2">
+          <span className="w-2 h-8 bg-[#00BFFF] rounded-full"></span>
+          Breaking Market News
+        </h2>
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {marketNews.map((item, index) => (
+            <a
+              key={index}
+              href={item.link}
+              target="_blank"
+              rel="noopener noreferrer"
+              className={`card p-6 hover:bg-[#12121A] transition-all group ${index === 0 ? 'lg:col-span-2' : ''}`}
+            >
+              <div className="flex items-center gap-2 mb-3">
+                <span className="text-xs text-[#00BFFF] font-medium px-2 py-0.5 bg-[#00BFFF]/10 rounded">{item.source}</span>
+                <span className="text-xs text-[#6B7280]">{item.published}</span>
+                {index === 0 && (
+                  <span className="text-xs text-red-500 font-bold px-2 py-0.5 bg-red-500/10 rounded animate-pulse">LIVE</span>
+                )}
+              </div>
+              <h3 className={`text-lg font-semibold text-white mb-2 group-hover:text-[#00BFFF] transition-colors ${index === 0 ? 'text-xl' : ''}`}>
+                {item.title}
+              </h3>
+              <p className="text-sm text-[#6B7280] line-clamp-2">{item.summary}</p>
+            </a>
+          ))}
+        </div>
+      </div>
+
       <div>
         <h2 className="text-xl font-semibold text-white mb-4 flex items-center gap-2">
-          <span className="w-2 h-6 bg-[#00BFFF] rounded-full"></span>
-          Market News
+          <span className="w-2 h-6 bg-[#00FFB0] rounded-full"></span>
+          Your News
         </h2>
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-          {marketNews.slice(0, 8).map((item, idx) => (
-            <NewsCard key={`market-${idx}`} item={{
-              id: `market-${idx}`,
+          {portfolioNews.slice(0, 8).map((item, idx) => (
+            <NewsCard key={`portfolio-${idx}`} item={{
+              id: `portfolio-${idx}`,
               title: item.title,
               source: item.source,
               timestamp: item.published,
-              sentiment: 'neutral',
-              summary: item.summary,
+              ticker: item.symbol,
+              sentiment: 'neutral' as const,
+              summary: item.title,
               link: item.link,
             }} />
           ))}

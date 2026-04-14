@@ -15,7 +15,7 @@ export default function AdvisorPage() {
       <div className="flex items-center justify-between mb-8">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">AI Advisor</h1>
-          <p className="text-[#6B7280]">Your personal financial assistant powered by Grok</p>
+          <p className="text-[#6B7280]">Your personal financial assistant</p>
         </div>
       </div>
 

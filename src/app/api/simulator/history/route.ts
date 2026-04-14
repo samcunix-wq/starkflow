@@ -1,71 +1,132 @@
 import { NextResponse } from 'next/server';
+import YahooFinance from 'yahoo-finance2';
+
+const yahooFinance = new YahooFinance();
+
+const CACHE_DURATION = 3600;
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
-  const symbol = searchParams.get('symbol');
-  const range = searchParams.get('range') || '1y';
+  const symbol = searchParams.get('symbol')?.toUpperCase();
+  const startDate = searchParams.get('startDate');
+  const endDate = searchParams.get('endDate') || new Date().toISOString().split('T')[0];
 
   if (!symbol) {
-    return NextResponse.json({ error: 'Symbol required' }, { status: 400 });
+    return NextResponse.json({ error: 'Symbol is required' }, { status: 400 });
   }
 
-  const rangeMap: Record<string, string> = {
-    '1m': '1mo',
-    '3m': '3mo',
-    '6m': '6mo',
-    '1y': '1y',
-    'all': '5y'
-  };
-
-  const intervalMap: Record<string, string> = {
-    '1m': '1d',
-    '3m': '1d',
-    '6m': '1wk',
-    '1y': '1wk',
-    'all': '1mo'
-  };
-
-  const period = rangeMap[range] || '1y';
-  const interval = intervalMap[range] || '1d';
+  if (!startDate) {
+    return NextResponse.json({ error: 'Start date is required' }, { status: 400 });
+  }
 
   try {
-    const response = await fetch(
-      `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=${interval}&range=${period}`,
-      {
-        headers: {
-          'User-Agent': 'Mozilla/5.0'
-        }
-      }
-    );
+    const [priceHistory, dividends, splits, quote] = await Promise.all([
+      yahooFinance.historical(symbol, {
+        period1: startDate,
+        period2: endDate,
+        interval: '1d',
+      }).catch(() => []),
+      yahooFinance.historical(symbol, {
+        period1: startDate,
+        period2: endDate,
+        interval: '1d',
+        events: 'dividends',
+      }).catch(() => []),
+      yahooFinance.historical(symbol, {
+        period1: startDate,
+        period2: endDate,
+        interval: '1d',
+        events: 'split',
+      }).catch(() => []),
+      yahooFinance.quote(symbol).catch(() => null),
+    ]);
 
-    if (!response.ok) {
-      return NextResponse.json({ error: 'Failed to fetch data' }, { status: 500 });
-    }
-
-    const data = await response.json();
-    const result = data?.chart?.result?.[0];
-
-    if (!result) {
-      return NextResponse.json({ error: 'No data found' }, { status: 404 });
-    }
-
-    const timestamps = result.timestamp || [];
-    const quotes = result.indicators?.quote?.[0] || {};
-    const adjClose = result.indicators?.adjclose?.[0]?.adjclose || quotes.close;
-
-    const prices = timestamps.map((ts: number, i: number) => ({
-      date: new Date(ts * 1000).toISOString().split('T')[0],
-      price: adjClose[i] || quotes.close?.[i] || 0,
-      volume: quotes.volume?.[i] || 0
-    })).filter((p: any) => p.price !== null && p.price !== undefined);
+    const adjustedHistory = applySplitsAndDividends(priceHistory, splits, dividends, startDate);
+    
+    const totalDividends = dividends.reduce((sum: number, d: any) => sum + d.dividends, 0);
+    const currentPrice = quote?.regularMarketPrice || priceHistory[priceHistory.length - 1]?.close || 0;
+    const startPrice = priceHistory[0]?.adjClose || priceHistory[0]?.close || 0;
 
     return NextResponse.json({
-      symbol: symbol.toUpperCase(),
-      range,
-      prices
+      symbol,
+      name: quote?.shortName || quote?.longName || symbol,
+      currentPrice,
+      startPrice,
+      startDate,
+      endDate,
+      priceHistory: adjustedHistory.map((h: any) => ({
+        date: h.date.toISOString(),
+        price: h.adjClose || h.close,
+        close: h.close,
+      })),
+      dividends: dividends.map((d: any) => ({
+        date: d.date.toISOString(),
+        amount: d.dividends,
+      })),
+      splits: splits.map((s: any) => ({
+        date: s.date.toISOString(),
+        ratio: s.stockSplits,
+      })),
+      summary: {
+        totalDividends,
+        dividendCount: dividends.length,
+        totalReturn: startPrice > 0 ? ((currentPrice - startPrice) / startPrice) * 100 : 0,
+        priceReturn: currentPrice - startPrice,
+      },
+    }, {
+      headers: {
+        'Cache-Control': `public, s-maxage=${CACHE_DURATION}, stale-while-revalidate=${CACHE_DURATION * 2}`,
+      },
     });
-  } catch (error) {
-    console.error('History API error:', error);
-    return NextResponse.json({ error: 'Failed to fetch history' }, { status: 500 });
+  } catch (error: any) {
+    console.error('Simulator historical error:', error);
+    return NextResponse.json(
+      { error: `Failed to fetch historical data: ${error.message}` },
+      { status: 500 }
+    );
   }
+}
+
+function applySplitsAndDividends(
+  history: any[],
+  splits: any[],
+  dividends: any[],
+  startDate: string
+): any[] {
+  if (!history.length) return [];
+
+  const adjustedHistory = history.map(h => ({
+    ...h,
+    adjClose: h.adjClose || h.close,
+  }));
+
+  const splitMap = new Map<string, number>();
+  splits.forEach(split => {
+    const dateStr = split.date.toISOString().split('T')[0];
+    const [before, after] = split.stockSplits.split(':').map(Number);
+    const ratio = after / before;
+    splitMap.set(dateStr, ratio);
+  });
+
+  const dividendSet = new Set<string>();
+  dividends.forEach(d => {
+    dividendSet.add(d.date.toISOString().split('T')[0]);
+  });
+
+  let cumulativeSplit = 1;
+  const startTime = new Date(startDate).getTime();
+
+  for (let i = 0; i < adjustedHistory.length; i++) {
+    const dateStr = adjustedHistory[i].date.toISOString().split('T')[0];
+    
+    if (splitMap.has(dateStr)) {
+      cumulativeSplit *= splitMap.get(dateStr)!;
+    }
+
+    if (adjustedHistory[i].date.getTime() >= startTime) {
+      adjustedHistory[i].adjClose = (adjustedHistory[i].close || adjustedHistory[i].adjClose) * cumulativeSplit;
+    }
+  }
+
+  return adjustedHistory;
 }

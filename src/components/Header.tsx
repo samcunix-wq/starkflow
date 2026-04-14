@@ -1,12 +1,78 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Bell, Search, Menu, TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, Check, Trash2, User, LogOut, LogIn } from 'lucide-react';
+import { Bell, Search, Menu, X, TrendingUp, TrendingDown, DollarSign, Calendar, AlertCircle, Check, Trash2, User, LogOut, LogIn } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { useNotifications, Notification } from '@/context/NotificationContext';
 import { useAuth } from '@/context/AuthContext';
 import { isConfigured as isSupabaseConfigured } from '@/lib/supabase';
+
+interface SearchResult {
+  symbol: string;
+  name: string;
+}
+
+function isUSMarketHoliday(date: Date): boolean {
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+  const dayOfWeek = date.getDay();
+  
+  const holidays = [
+    { month: 0, day: 1, name: 'New Year\'s Day' },
+    { month: 0, day: 20, name: 'MLK Day', isThirdMonday: true },
+    { month: 1, day: 17, name: 'Presidents Day', isThirdMonday: true },
+    { month: 2, day: 10, name: 'Good Friday' },
+    { month: 4, day: 26, name: 'Memorial Day', isLastMonday: true },
+    { month: 5, day: 19, name: 'Juneteenth' },
+    { month: 6, day: 4, name: 'Independence Day' },
+    { month: 8, day: 1, name: 'Labor Day', isFirstMonday: true },
+    { month: 10, day: 27, name: 'Thanksgiving', isFourthThursday: true },
+    { month: 11, day: 25, name: 'Christmas' },
+  ];
+  
+  for (const holiday of holidays) {
+    if (holiday.isThirdMonday) {
+      const thirdMonday = getNthWeekdayOfMonth(year, holiday.month, 3, 1);
+      if (thirdMonday && date.toDateString() === thirdMonday.toDateString()) return true;
+    } else if (holiday.isLastMonday) {
+      const lastMonday = getLastWeekdayOfMonth(year, holiday.month, 1);
+      if (lastMonday && date.toDateString() === lastMonday.toDateString()) return true;
+    } else if (holiday.isFirstMonday) {
+      const firstMonday = getNthWeekdayOfMonth(year, holiday.month, 1, 1);
+      if (firstMonday && date.toDateString() === firstMonday.toDateString()) return true;
+    } else if (holiday.isFourthThursday) {
+      const fourthThursday = getNthWeekdayOfMonth(year, holiday.month, 4, 4);
+      if (fourthThursday && date.toDateString() === fourthThursday.toDateString()) return true;
+    } else if (date.getMonth() === holiday.month && day === holiday.day) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
+function getNthWeekdayOfMonth(year: number, month: number, nth: number, desiredDay: number): Date | null {
+  let count = 0;
+  for (let d = 1; d <= 31; d++) {
+    const date = new Date(year, month, d);
+    if (date.getMonth() !== month) break;
+    if (date.getDay() === desiredDay) {
+      count++;
+      if (count === nth) return date;
+    }
+  }
+  return null;
+}
+
+function getLastWeekdayOfMonth(year: number, month: number, desiredDay: number): Date | null {
+  let lastDate = new Date(year, month + 1, 0);
+  while (lastDate.getDay() !== desiredDay) {
+    lastDate.setDate(lastDate.getDate() - 1);
+  }
+  return lastDate;
+}
 
 interface SearchResult {
   symbol: string;
@@ -46,6 +112,7 @@ export default function Header() {
 
   useEffect(() => {
     const updateMarketStatus = () => {
+      // Use the browser's timezone to get local time
       const localTime = new Date();
       const hours = localTime.getHours();
       const minutes = localTime.getMinutes();
@@ -56,13 +123,20 @@ export default function Header() {
       let status = { label: 'Market Closed', color: 'text-[#6B7280]', bgColor: 'bg-[#6B7280]/10', dotColor: 'bg-[#6B7280]' };
       
       if (!isWeekend) {
+        // Pre-Market: 4am - 9:30am
         if (timeInMinutes >= 4 * 60 && timeInMinutes < 9.5 * 60) {
           status = { label: 'Pre-Market', color: 'text-[#06B6D4]', bgColor: 'bg-[#06B6D4]/10', dotColor: 'bg-[#06B6D4]' };
-        } else if (timeInMinutes >= 9.5 * 60 && timeInMinutes < 16 * 60) {
+        }
+        // Market Open: 9:30am - 4pm
+        else if (timeInMinutes >= 9.5 * 60 && timeInMinutes < 16 * 60) {
           status = { label: 'Market Open', color: 'text-[#10B981]', bgColor: 'bg-[#10B981]/10', dotColor: 'bg-[#10B981]' };
-        } else if (timeInMinutes >= 16 * 60 && timeInMinutes < 20 * 60) {
+        }
+        // After Hours: 4pm - 8pm
+        else if (timeInMinutes >= 16 * 60 && timeInMinutes < 20 * 60) {
           status = { label: 'After Hours', color: 'text-[#F59E0B]', bgColor: 'bg-[#F59E0B]/10', dotColor: 'bg-[#F59E0B]' };
-        } else if (timeInMinutes >= 20 * 60 || timeInMinutes < 4 * 60) {
+        }
+        // Market Closed: 8pm - 4am
+        else if (timeInMinutes >= 20 * 60 || timeInMinutes < 4 * 60) {
           status = { label: 'Market Closed', color: 'text-[#6B7280]', bgColor: 'bg-[#6B7280]/10', dotColor: 'bg-[#6B7280]' };
         }
       }
@@ -73,6 +147,7 @@ export default function Header() {
     updateMarketStatus();
     const interval = setInterval(updateMarketStatus, 60000);
     
+    // Clock update
     const updateClock = () => {
       const now = new Date();
       let hours = now.getHours();
@@ -229,7 +304,7 @@ export default function Header() {
                   <div className="p-8 text-center text-[#6B7280]">
                     <Bell className="w-8 h-8 mx-auto mb-2 opacity-50" />
                     <p className="text-sm">No notifications yet</p>
-                    <p className="text-xs mt-1">We&apos;ll notify you about trades, dividends, and more</p>
+                    <p className="text-xs mt-1">We'll notify you about trades, dividends, and more</p>
                   </div>
                 ) : (
                   notifications.slice(0, 10).map((notification) => (
