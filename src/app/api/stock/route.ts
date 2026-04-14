@@ -134,6 +134,22 @@ export async function GET(request: Request) {
   
   if (summary.dividendFrequency) {
     dividendFrequency = summary.dividendFrequency;
+  } else if (dividendHistory.length >= 2) {
+    const sortedDividends: any[] = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+    const recentDividends = sortedDividends.slice(0, Math.min(4, sortedDividends.length));
+    let avgDaysBetween = 30;
+    if (recentDividends.length >= 2) {
+      const daysBetween: number[] = [];
+      for (let i = 0; i < recentDividends.length - 1; i++) {
+        const days = (new Date(recentDividends[i].date).getTime() - new Date(recentDividends[i + 1].date).getTime()) / (1000 * 60 * 60 * 24);
+        daysBetween.push(days);
+      }
+      avgDaysBetween = daysBetween.reduce((a, b) => a + b, 0) / daysBetween.length;
+    }
+    if (avgDaysBetween <= 40) dividendFrequency = 'monthly';
+    else if (avgDaysBetween <= 100) dividendFrequency = 'quarterly';
+    else if (avgDaysBetween <= 200) dividendFrequency = 'semi-annual';
+    else dividendFrequency = 'annual';
   } else if (summary.dividendYield && summary.dividendRate) {
     const annualRate = summary.dividendRate;
     if (annualRate > 0) {
@@ -359,6 +375,22 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
           
           if (summary.dividendFrequency) {
             dividendFrequency = summary.dividendFrequency;
+          } else if (dividendHistory.length >= 2) {
+            const sortedDividends: any[] = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+            const recentDividends = sortedDividends.slice(0, Math.min(4, sortedDividends.length));
+            let avgDaysBetween = 30;
+            if (recentDividends.length >= 2) {
+              const daysBetween: number[] = [];
+              for (let i = 0; i < recentDividends.length - 1; i++) {
+                const days = (new Date(recentDividends[i].date).getTime() - new Date(recentDividends[i + 1].date).getTime()) / (1000 * 60 * 60 * 24);
+                daysBetween.push(days);
+              }
+              avgDaysBetween = daysBetween.reduce((a, b) => a + b, 0) / daysBetween.length;
+            }
+            if (avgDaysBetween <= 40) dividendFrequency = 'monthly';
+            else if (avgDaysBetween <= 100) dividendFrequency = 'quarterly';
+            else if (avgDaysBetween <= 200) dividendFrequency = 'semi-annual';
+            else dividendFrequency = 'annual';
           }
           
           const sector = profile.sector || 
