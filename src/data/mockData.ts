@@ -12,7 +12,10 @@ export interface Holding {
   totalGainPercent: number;
   peRatio: number;
   dividendYield: number;
+  dividendRate: number;
   exDivDate: string;
+  dividendPaymentDate: string;
+  dividendFrequency: string;
   nextEarningsDate: string;
   sector: string;
 }
@@ -100,7 +103,10 @@ export const holdings: Holding[] = [
     totalGainPercent: 23.1,
     peRatio: 28.5,
     dividendYield: 0.52,
+    dividendRate: 0.96,
     exDivDate: '2024-02-09',
+    dividendPaymentDate: '2024-02-15',
+    dividendFrequency: 'quarterly',
     nextEarningsDate: '2024-04-25',
     sector: 'Technology',
   },
@@ -118,7 +124,10 @@ export const holdings: Holding[] = [
     totalGainPercent: 20.0,
     peRatio: 35.2,
     dividendYield: 0.74,
+    dividendRate: 3.0,
     exDivDate: '2024-02-14',
+    dividendPaymentDate: '2024-03-14',
+    dividendFrequency: 'quarterly',
     nextEarningsDate: '2024-04-30',
     sector: 'Technology',
   },
@@ -136,7 +145,10 @@ export const holdings: Holding[] = [
     totalGainPercent: 25.0,
     peRatio: 24.8,
     dividendYield: 0.0,
+    dividendRate: 0,
     exDivDate: '-',
+    dividendPaymentDate: '-',
+    dividendFrequency: 'none',
     nextEarningsDate: '2024-04-23',
     sector: 'Technology',
   },
@@ -154,7 +166,10 @@ export const holdings: Holding[] = [
     totalGainPercent: 97.78,
     peRatio: 65.4,
     dividendYield: 0.03,
+    dividendRate: 0.16,
     exDivDate: '2024-02-26',
+    dividendPaymentDate: '2024-03-27',
+    dividendFrequency: 'quarterly',
     nextEarningsDate: '2024-05-22',
     sector: 'Technology',
   },
@@ -172,7 +187,10 @@ export const holdings: Holding[] = [
     totalGainPercent: 11.36,
     peRatio: 42.1,
     dividendYield: 0.0,
+    dividendRate: 0,
     exDivDate: '-',
+    dividendPaymentDate: '-',
+    dividendFrequency: 'none',
     nextEarningsDate: '2024-04-23',
     sector: 'Consumer',
   },
@@ -190,7 +208,10 @@ export const holdings: Holding[] = [
     totalGainPercent: 19.35,
     peRatio: 45.6,
     dividendYield: 0.0,
+    dividendRate: 0,
     exDivDate: '-',
+    dividendPaymentDate: '-',
+    dividendFrequency: 'none',
     nextEarningsDate: '2024-05-01',
     sector: 'Consumer',
   },
@@ -208,7 +229,10 @@ export const holdings: Holding[] = [
     totalGainPercent: 36.84,
     peRatio: 32.8,
     dividendYield: 0.35,
+    dividendRate: 2.0,
     exDivDate: '2024-02-22',
+    dividendPaymentDate: '2024-02-28',
+    dividendFrequency: 'quarterly',
     nextEarningsDate: '2024-04-24',
     sector: 'Technology',
   },
@@ -226,7 +250,10 @@ export const holdings: Holding[] = [
     totalGainPercent: 18.18,
     peRatio: 11.2,
     dividendYield: 2.45,
+    dividendRate: 4.6,
     exDivDate: '2024-01-04',
+    dividendPaymentDate: '2024-01-31',
+    dividendFrequency: 'quarterly',
     nextEarningsDate: '2024-04-12',
     sector: 'Finance',
   },
