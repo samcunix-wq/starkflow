@@ -142,12 +142,14 @@ export async function GET(request: Request) {
   }
   
   const dividendYield = formatNum(
+    summary.yield ? summary.yield * 100 :
     summary.dividendYield ? summary.dividendYield * 100 : 
     priceInfo.dividendYield ? priceInfo.dividendYield * 100 :
     keyStats.dividendYield ? keyStats.dividendYield * 100 : null
   );
   
   const dividendRate = formatNum(
+    summary.trailingAnnualDividendRate ||
     summary.dividendRate ||
     priceInfo.dividendRate ||
     keyStats.dividendRate ||
@@ -155,79 +157,93 @@ export async function GET(request: Request) {
     0
   );
 
-  return NextResponse.json({
-    symbol: symbol,
-    name: quote.shortName || quote.longName || priceInfo.shortName || priceInfo.longName || symbol,
-    price,
-    change,
-    changePercent,
-    previousClose: quote.previousClose || quote.pc || 0,
-    open: quote.regularMarketOpen || quote.open || 0,
-    high: quote.regularMarketDayHigh || quote.dayHigh || 0,
-    low: quote.regularMarketDayLow || quote.dayLow || 0,
-    volume: quote.regularMarketVolume || quote.volume || 0,
-    
-    marketCap: formatNum(summary.marketCap || priceInfo.marketCap || quote.marketCap),
-    peRatio: formatNum(summary.trailingPE || keyStats.trailingPE),
-    forwardPE: formatNum(summary.forwardPE),
-    pegRatio: formatNum(summary.pegRatio),
-    dividendYield,
-    dividendRate,
-    exDivDate,
-    dividendPaymentDate,
-    dividendFrequency,
-    payoutRatio: formatNum(summary.payoutRatio ? summary.payoutRatio * 100 : null),
-    nextEarningsDate,
-    
-    eps: formatNum(keyStats.epsTrailingTwelveMonths || keyStats.trailingEps),
-    epsForward: formatNum(keyStats.epsForward),
-    
-    fiftyTwoWeekHigh: formatNum(summary.fiftyTwoWeekHigh),
-    fiftyTwoWeekLow: formatNum(summary.fiftyTwoWeekLow),
-    fiftyTwoWeekChange: formatNum(summary.fiftyTwoWeekChange),
-    fiftyDayAverage: formatNum(summary.fiftyDayAverage),
-    twoHundredDayAverage: formatNum(summary.twoHundredDayAverage),
-    
-    priceToBook: formatNum(summary.priceToBook),
-    priceToSales: formatNum(summary.priceToSales),
-    bookValue: formatNum(keyStats.bookValue),
-    
-    profitMargin: formatNum(financial.profitMargins ? financial.profitMargins * 100 : null),
-    operatingMargin: formatNum(financial.operatingMargins ? financial.operatingMargins * 100 : null),
-    returnOnEquity: formatNum(financial.returnOnEquity ? financial.returnOnEquity * 100 : null),
-    returnOnAssets: formatNum(financial.returnOnAssets ? financial.returnOnAssets * 100 : null),
-    
-    revenueGrowth: formatNum(keyStats.revenueGrowth ? keyStats.revenueGrowth * 100 : null),
-    revenue: formatNum(summary.revenue || financial.totalRevenue),
-    grossProfit: formatNum(financial.grossProfits),
-    ebitda: formatNum(financial.ebitda),
-    
-    beta: formatNum(keyStats.beta),
-    averageVolume: formatNum(summary.averageVolume),
-    averageVolume10Day: formatNum(summary.averageVolume10Day),
-    
-    sector: profile.sector || null,
-    industry: profile.industry || null,
-    website: profile.website || null,
-    description: profile.longBusinessSummary || null,
-    employees: profile.fullTimeEmployees ? parseInt(profile.fullTimeEmployees) : null,
-    phone: profile.phone || null,
-    city: profile.city || null,
-    state: profile.state || null,
-    country: profile.country || null,
-    currency: quote.currency || 'USD',
-    exchange: quote.exchange || null,
-    ipo: profile.ipoDate || null,
-    
-    history: history.map((h: any) => ({
-      date: h.date.toISOString(),
+  try {
+    const historyData = Array.isArray(history) ? history.map((h: any) => ({
+      date: h.date instanceof Date ? h.date.toISOString() : (h.date || ''),
       close: h.close,
       open: h.open,
       high: h.high,
       low: h.low,
       volume: h.volume,
-    })).reverse(),
-  });
+    })).reverse() : [];
+
+    return NextResponse.json({
+      symbol: symbol,
+      name: quote.shortName || quote.longName || priceInfo.shortName || priceInfo.longName || symbol,
+      price,
+      change,
+      changePercent,
+      previousClose: quote.previousClose || quote.pc || 0,
+      open: quote.regularMarketOpen || quote.open || 0,
+      high: quote.regularMarketDayHigh || quote.dayHigh || 0,
+      low: quote.regularMarketDayLow || quote.dayLow || 0,
+      volume: quote.regularMarketVolume || quote.volume || 0,
+      
+      marketCap: formatNum(summary.marketCap || priceInfo.marketCap || quote.marketCap),
+      peRatio: formatNum(summary.trailingPE || keyStats.trailingPE),
+      forwardPE: formatNum(summary.forwardPE),
+      pegRatio: formatNum(summary.pegRatio),
+      dividendYield,
+      dividendRate,
+      exDivDate,
+      dividendPaymentDate,
+      dividendFrequency,
+      payoutRatio: formatNum(summary.payoutRatio ? summary.payoutRatio * 100 : null),
+      nextEarningsDate,
+      
+      eps: formatNum(keyStats.epsTrailingTwelveMonths || keyStats.trailingEps),
+      epsForward: formatNum(keyStats.epsForward),
+      
+      fiftyTwoWeekHigh: formatNum(summary.fiftyTwoWeekHigh),
+      fiftyTwoWeekLow: formatNum(summary.fiftyTwoWeekLow),
+      fiftyTwoWeekChange: formatNum(summary.fiftyTwoWeekChange),
+      fiftyDayAverage: formatNum(summary.fiftyDayAverage),
+      twoHundredDayAverage: formatNum(summary.twoHundredDayAverage),
+      
+      priceToBook: formatNum(summary.priceToBook),
+      priceToSales: formatNum(summary.priceToSales),
+      bookValue: formatNum(keyStats.bookValue),
+      
+      profitMargin: formatNum(financial.profitMargins ? financial.profitMargins * 100 : null),
+      operatingMargin: formatNum(financial.operatingMargins ? financial.operatingMargins * 100 : null),
+      returnOnEquity: formatNum(financial.returnOnEquity ? financial.returnOnEquity * 100 : null),
+      returnOnAssets: formatNum(financial.returnOnAssets ? financial.returnOnAssets * 100 : null),
+      
+      revenueGrowth: formatNum(keyStats.revenueGrowth ? keyStats.revenueGrowth * 100 : null),
+      revenue: formatNum(summary.revenue || financial.totalRevenue),
+      grossProfit: formatNum(financial.grossProfits),
+      ebitda: formatNum(financial.ebitda),
+      
+      beta: formatNum(keyStats.beta),
+      averageVolume: formatNum(summary.averageVolume),
+      averageVolume10Day: formatNum(summary.averageVolume10Day),
+      
+      sector: profile.sector || null,
+      industry: profile.industry || null,
+      website: profile.website || null,
+      description: profile.longBusinessSummary || null,
+      employees: profile.fullTimeEmployees ? parseInt(profile.fullTimeEmployees) : null,
+      phone: profile.phone || null,
+      city: profile.city || null,
+      state: profile.state || null,
+      country: profile.country || null,
+      currency: quote.currency || 'USD',
+      exchange: quote.exchange || null,
+      ipo: profile.ipoDate || null,
+      
+      history: historyData,
+    });
+  } catch (responseError: any) {
+    console.error('Response generation error:', responseError);
+    return NextResponse.json({
+      error: `Unable to process data for ${symbol}. Please try again.`,
+      price,
+      symbol: symbol,
+      name: quote.shortName || quote.longName || symbol,
+      change,
+      changePercent,
+    }, { status: 200 });
+  }
 }
 
 async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[] = []) {
@@ -325,8 +341,8 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
             totalGain: value - cost,
             totalGainPercent: cost > 0 ? ((value - cost) / cost) * 100 : 0,
             peRatio: formatNum(summary.trailingPE),
-            dividendYield: formatNum(summary.dividendYield ? summary.dividendYield * 100 : 0),
-            dividendRate: formatNum(summary.dividendRate),
+            dividendYield: formatNum(summary.yield ? summary.yield * 100 : summary.dividendYield ? summary.dividendYield * 100 : 0),
+            dividendRate: formatNum(summary.trailingAnnualDividendRate || summary.dividendRate),
             exDivDate,
             dividendPaymentDate,
             dividendFrequency,
