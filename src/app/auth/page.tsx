@@ -43,14 +43,14 @@ export default function AuthPage() {
     if (mode === 'signup') {
       const { error } = await signUp(email, password);
       if (error) {
-        setError(error.message);
+        setError(error);
       } else {
         setSuccess('Account created! Check your email to confirm your account.');
       }
     } else {
       const { error } = await signIn(email, password);
       if (error) {
-        setError(error.message);
+        setError(error);
       } else {
         router.push('/');
       }

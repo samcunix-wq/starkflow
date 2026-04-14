@@ -85,6 +85,10 @@ export async function GET(request: Request) {
   const histOptions: any = { period1: getPeriodStart(period), period2: new Date(), interval: '1d' };
   const history = await yahooFinance.historical(symbol, histOptions).catch(() => []) || [];
 
+  const chartOptions: any = { period1: getPeriodStart('1y'), interval: '1d' };
+  const chartData: any = await yahooFinance.chart(symbol, chartOptions).catch(() => null) || {};
+  const dividendHistory = chartData.events?.dividends || [];
+
   const formatNum = (val: any) => {
     if (val === null || val === undefined || isNaN(val)) return null;
     return typeof val === 'number' ? val : parseFloat(val);
@@ -130,6 +134,22 @@ export async function GET(request: Request) {
   
   if (summary.dividendFrequency) {
     dividendFrequency = summary.dividendFrequency;
+  } else if (dividendHistory.length >= 2) {
+    const sortedDividends: any[] = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+    const recentDividends = sortedDividends.slice(0, Math.min(4, sortedDividends.length));
+    let avgDaysBetween = 30;
+    if (recentDividends.length >= 2) {
+      const daysBetween: number[] = [];
+      for (let i = 0; i < recentDividends.length - 1; i++) {
+        const days = (new Date(recentDividends[i].date).getTime() - new Date(recentDividends[i + 1].date).getTime()) / (1000 * 60 * 60 * 24);
+        daysBetween.push(days);
+      }
+      avgDaysBetween = daysBetween.reduce((a, b) => a + b, 0) / daysBetween.length;
+    }
+    if (avgDaysBetween <= 40) dividendFrequency = 'monthly';
+    else if (avgDaysBetween <= 100) dividendFrequency = 'quarterly';
+    else if (avgDaysBetween <= 200) dividendFrequency = 'semi-annual';
+    else dividendFrequency = 'annual';
   } else if (summary.dividendYield && summary.dividendRate) {
     const annualRate = summary.dividendRate;
     if (annualRate > 0) {
@@ -141,93 +161,131 @@ export async function GET(request: Request) {
     }
   }
   
+  if ((!exDivDate || exDivDate === '-') && dividendHistory.length > 0) {
+    const sortedDividends = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+    const mostRecentDiv = sortedDividends[0];
+    if (mostRecentDiv && mostRecentDiv.date) {
+      const payDate = new Date(mostRecentDiv.date);
+      if (!isNaN(payDate.getTime())) {
+        dividendPaymentDate = payDate.toISOString().split('T')[0];
+        const exDate = new Date(payDate);
+        exDate.setDate(exDate.getDate() - 1);
+        exDivDate = exDate.toISOString().split('T')[0];
+      }
+    }
+  }
+  
   const dividendYield = formatNum(
+    summary.yield ? summary.yield * 100 :
     summary.dividendYield ? summary.dividendYield * 100 : 
     priceInfo.dividendYield ? priceInfo.dividendYield * 100 :
     keyStats.dividendYield ? keyStats.dividendYield * 100 : null
   );
   
-  const dividendRate = formatNum(
+  let dividendRate = formatNum(
+    summary.trailingAnnualDividendRate ||
     summary.dividendRate ||
     priceInfo.dividendRate ||
     keyStats.dividendRate ||
     quote.dividendRate ||
     0
   );
+  
+  if (dividendRate === 0 && dividendHistory.length > 0) {
+    const sortedDividends = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+    const mostRecentDiv = sortedDividends[0];
+    if (mostRecentDiv && mostRecentDiv.amount) {
+      dividendRate = mostRecentDiv.amount * 4;
+    }
+  }
 
-  return NextResponse.json({
-    symbol: symbol,
-    name: quote.shortName || quote.longName || priceInfo.shortName || priceInfo.longName || symbol,
-    price,
-    change,
-    changePercent,
-    previousClose: quote.previousClose || quote.pc || 0,
-    open: quote.regularMarketOpen || quote.open || 0,
-    high: quote.regularMarketDayHigh || quote.dayHigh || 0,
-    low: quote.regularMarketDayLow || quote.dayLow || 0,
-    volume: quote.regularMarketVolume || quote.volume || 0,
-    
-    marketCap: formatNum(summary.marketCap || priceInfo.marketCap || quote.marketCap),
-    peRatio: formatNum(summary.trailingPE || keyStats.trailingPE),
-    forwardPE: formatNum(summary.forwardPE),
-    pegRatio: formatNum(summary.pegRatio),
-    dividendYield,
-    dividendRate,
-    exDivDate,
-    dividendPaymentDate,
-    dividendFrequency,
-    payoutRatio: formatNum(summary.payoutRatio ? summary.payoutRatio * 100 : null),
-    nextEarningsDate,
-    
-    eps: formatNum(keyStats.epsTrailingTwelveMonths || keyStats.trailingEps),
-    epsForward: formatNum(keyStats.epsForward),
-    
-    fiftyTwoWeekHigh: formatNum(summary.fiftyTwoWeekHigh),
-    fiftyTwoWeekLow: formatNum(summary.fiftyTwoWeekLow),
-    fiftyTwoWeekChange: formatNum(summary.fiftyTwoWeekChange),
-    fiftyDayAverage: formatNum(summary.fiftyDayAverage),
-    twoHundredDayAverage: formatNum(summary.twoHundredDayAverage),
-    
-    priceToBook: formatNum(summary.priceToBook),
-    priceToSales: formatNum(summary.priceToSales),
-    bookValue: formatNum(keyStats.bookValue),
-    
-    profitMargin: formatNum(financial.profitMargins ? financial.profitMargins * 100 : null),
-    operatingMargin: formatNum(financial.operatingMargins ? financial.operatingMargins * 100 : null),
-    returnOnEquity: formatNum(financial.returnOnEquity ? financial.returnOnEquity * 100 : null),
-    returnOnAssets: formatNum(financial.returnOnAssets ? financial.returnOnAssets * 100 : null),
-    
-    revenueGrowth: formatNum(keyStats.revenueGrowth ? keyStats.revenueGrowth * 100 : null),
-    revenue: formatNum(summary.revenue || financial.totalRevenue),
-    grossProfit: formatNum(financial.grossProfits),
-    ebitda: formatNum(financial.ebitda),
-    
-    beta: formatNum(keyStats.beta),
-    averageVolume: formatNum(summary.averageVolume),
-    averageVolume10Day: formatNum(summary.averageVolume10Day),
-    
-    sector: profile.sector || null,
-    industry: profile.industry || null,
-    website: profile.website || null,
-    description: profile.longBusinessSummary || null,
-    employees: profile.fullTimeEmployees ? parseInt(profile.fullTimeEmployees) : null,
-    phone: profile.phone || null,
-    city: profile.city || null,
-    state: profile.state || null,
-    country: profile.country || null,
-    currency: quote.currency || 'USD',
-    exchange: quote.exchange || null,
-    ipo: profile.ipoDate || null,
-    
-    history: history.map((h: any) => ({
-      date: h.date.toISOString(),
+  try {
+    const historyData = Array.isArray(history) ? history.map((h: any) => ({
+      date: h.date instanceof Date ? h.date.toISOString() : (h.date || ''),
       close: h.close,
       open: h.open,
       high: h.high,
       low: h.low,
       volume: h.volume,
-    })).reverse(),
-  });
+    })).reverse() : [];
+
+    return NextResponse.json({
+      symbol: symbol,
+      name: quote.shortName || quote.longName || priceInfo.shortName || priceInfo.longName || symbol,
+      price,
+      change,
+      changePercent,
+      previousClose: quote.previousClose || quote.pc || 0,
+      open: quote.regularMarketOpen || quote.open || 0,
+      high: quote.regularMarketDayHigh || quote.dayHigh || 0,
+      low: quote.regularMarketDayLow || quote.dayLow || 0,
+      volume: quote.regularMarketVolume || quote.volume || 0,
+      
+      marketCap: formatNum(summary.marketCap || priceInfo.marketCap || quote.marketCap),
+      peRatio: formatNum(summary.trailingPE || keyStats.trailingPE),
+      forwardPE: formatNum(summary.forwardPE),
+      pegRatio: formatNum(summary.pegRatio),
+      dividendYield,
+      dividendRate,
+      exDivDate,
+      dividendPaymentDate,
+      dividendFrequency,
+      payoutRatio: formatNum(summary.payoutRatio ? summary.payoutRatio * 100 : null),
+      nextEarningsDate,
+      
+      eps: formatNum(keyStats.epsTrailingTwelveMonths || keyStats.trailingEps),
+      epsForward: formatNum(keyStats.epsForward),
+      
+      fiftyTwoWeekHigh: formatNum(summary.fiftyTwoWeekHigh),
+      fiftyTwoWeekLow: formatNum(summary.fiftyTwoWeekLow),
+      fiftyTwoWeekChange: formatNum(summary.fiftyTwoWeekChange),
+      fiftyDayAverage: formatNum(summary.fiftyDayAverage),
+      twoHundredDayAverage: formatNum(summary.twoHundredDayAverage),
+      
+      priceToBook: formatNum(summary.priceToBook),
+      priceToSales: formatNum(summary.priceToSales),
+      bookValue: formatNum(keyStats.bookValue),
+      
+      profitMargin: formatNum(financial.profitMargins ? financial.profitMargins * 100 : null),
+      operatingMargin: formatNum(financial.operatingMargins ? financial.operatingMargins * 100 : null),
+      returnOnEquity: formatNum(financial.returnOnEquity ? financial.returnOnEquity * 100 : null),
+      returnOnAssets: formatNum(financial.returnOnAssets ? financial.returnOnAssets * 100 : null),
+      
+      revenueGrowth: formatNum(keyStats.revenueGrowth ? keyStats.revenueGrowth * 100 : null),
+      revenue: formatNum(summary.revenue || financial.totalRevenue),
+      grossProfit: formatNum(financial.grossProfits),
+      ebitda: formatNum(financial.ebitda),
+      
+      beta: formatNum(keyStats.beta),
+      averageVolume: formatNum(summary.averageVolume),
+      averageVolume10Day: formatNum(summary.averageVolume10Day),
+      
+      sector: profile.sector || null,
+      industry: profile.industry || null,
+      website: profile.website || null,
+      description: profile.longBusinessSummary || null,
+      employees: profile.fullTimeEmployees ? parseInt(profile.fullTimeEmployees) : null,
+      phone: profile.phone || null,
+      city: profile.city || null,
+      state: profile.state || null,
+      country: profile.country || null,
+      currency: quote.currency || 'USD',
+      exchange: quote.exchange || null,
+      ipo: profile.ipoDate || null,
+      
+      history: historyData,
+    });
+  } catch (responseError: any) {
+    console.error('Response generation error:', responseError);
+    return NextResponse.json({
+      error: `Unable to process data for ${symbol}. Please try again.`,
+      price,
+      symbol: symbol,
+      name: quote.shortName || quote.longName || symbol,
+      change,
+      changePercent,
+    }, { status: 200 });
+  }
 }
 
 async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[] = []) {
@@ -247,9 +305,10 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
     const results = await Promise.all(
       allSymbols.map(async (s) => {
         try {
-          const [quote, summaryDetail] = await Promise.all([
+          const [quote, summaryDetail, chartData] = await Promise.all([
             yahooFinance.quote(s),
             yahooFinance.quoteSummary(s, { modules: ['summaryDetail', 'summaryProfile', 'earnings', 'calendarEvents'] }).catch(() => ({})),
+            yahooFinance.chart(s, { period1: getPeriodStart('1y'), interval: '1d' }).catch(() => null),
           ]);
           const holding = allHoldings.find((h: any) => h.ticker === s);
           if (!holding) return null;
@@ -267,6 +326,7 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
           const profile = (summaryDetail as any)?.summaryProfile || {};
           const earnings = (summaryDetail as any)?.earnings || {};
           const calendarEvents = (summaryDetail as any)?.calendarEvents || {};
+          const dividendHistory = chartData?.events?.dividends || [];
           
           const earningsChart = earnings?.earningsChart || {};
           
@@ -299,8 +359,38 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
             }
           }
           
+          if ((!exDivDate || exDivDate === '-') && dividendHistory.length > 0) {
+            const sortedDividends = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+            const mostRecentDiv = sortedDividends[0];
+            if (mostRecentDiv && mostRecentDiv.date) {
+              const payDate = new Date(mostRecentDiv.date);
+              if (!isNaN(payDate.getTime())) {
+                dividendPaymentDate = payDate.toISOString().split('T')[0];
+                const exDate = new Date(payDate);
+                exDate.setDate(exDate.getDate() - 1);
+                exDivDate = exDate.toISOString().split('T')[0];
+              }
+            }
+          }
+          
           if (summary.dividendFrequency) {
             dividendFrequency = summary.dividendFrequency;
+          } else if (dividendHistory.length >= 2) {
+            const sortedDividends: any[] = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+            const recentDividends = sortedDividends.slice(0, Math.min(4, sortedDividends.length));
+            let avgDaysBetween = 30;
+            if (recentDividends.length >= 2) {
+              const daysBetween: number[] = [];
+              for (let i = 0; i < recentDividends.length - 1; i++) {
+                const days = (new Date(recentDividends[i].date).getTime() - new Date(recentDividends[i + 1].date).getTime()) / (1000 * 60 * 60 * 24);
+                daysBetween.push(days);
+              }
+              avgDaysBetween = daysBetween.reduce((a, b) => a + b, 0) / daysBetween.length;
+            }
+            if (avgDaysBetween <= 40) dividendFrequency = 'monthly';
+            else if (avgDaysBetween <= 100) dividendFrequency = 'quarterly';
+            else if (avgDaysBetween <= 200) dividendFrequency = 'semi-annual';
+            else dividendFrequency = 'annual';
           }
           
           const sector = profile.sector || 
@@ -311,6 +401,17 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
             if (val === null || val === undefined || isNaN(val)) return 0;
             return typeof val === 'number' ? val : parseFloat(val);
           };
+          
+          let dividendYield = formatNum(summary.yield ? summary.yield * 100 : summary.dividendYield ? summary.dividendYield * 100 : 0);
+          let dividendRate = formatNum(summary.trailingAnnualDividendRate || summary.dividendRate);
+          
+          if ((dividendRate === 0 || !dividendRate) && dividendHistory.length > 0) {
+            const sortedDividends = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+            const mostRecentDiv = sortedDividends[0];
+            if (mostRecentDiv && mostRecentDiv.amount) {
+              dividendRate = mostRecentDiv.amount * 4;
+            }
+          }
           
           return {
             id: s,
@@ -325,8 +426,8 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
             totalGain: value - cost,
             totalGainPercent: cost > 0 ? ((value - cost) / cost) * 100 : 0,
             peRatio: formatNum(summary.trailingPE),
-            dividendYield: formatNum(summary.dividendYield ? summary.dividendYield * 100 : 0),
-            dividendRate: formatNum(summary.dividendRate),
+            dividendYield,
+            dividendRate,
             exDivDate,
             dividendPaymentDate,
             dividendFrequency,

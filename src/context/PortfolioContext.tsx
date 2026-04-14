@@ -38,7 +38,6 @@ interface PortfolioContextType {
   updatePurchasingPower: (change: number) => void;
   realizedPL: number;
   addRealizedPL: (gain: number) => void;
-  isSynced: boolean;
 }
 
 const PortfolioContext = createContext<PortfolioContextType | undefined>(undefined);
@@ -55,13 +54,12 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [purchasingPower, setPurchasingPowerState] = useState(INITIAL_PURCHASING_POWER);
   const [realizedPL, setRealizedPL] = useState(0);
-  const [isSynced, setIsSynced] = useState(false);
 
   const syncToSupabase = useCallback(async (holdingsData: Holding[], pp: number, rp: number) => {
-    if (!user || !isSupabaseConfigured) return;
+    if (!user || !isSupabaseConfigured || !supabase) return;
     
     try {
-      const { error: holdingsError } = await supabase
+      await supabase
         .from('holdings')
         .upsert(
           holdingsData.map(h => ({
@@ -88,34 +86,20 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
           { onConflict: 'user_id,ticker' }
         );
 
-      if (holdingsError) {
-        console.error('Failed to sync holdings:', holdingsError);
-      } else {
-        setIsSynced(true);
-      }
-
-      const { error: ppError } = await supabase
+      await supabase
         .from('purchasing_power')
         .upsert({ user_id: user.id, amount: pp }, { onConflict: 'user_id' });
 
-      if (ppError) {
-        console.error('Failed to sync purchasing power:', ppError);
-      }
-
-      const { error: rpError } = await supabase
+      await supabase
         .from('realized_pl')
         .upsert({ user_id: user.id, amount: rp }, { onConflict: 'user_id' });
-
-      if (rpError) {
-        console.error('Failed to sync realized P/L:', rpError);
-      }
     } catch (err) {
       console.error('Supabase sync error:', err);
     }
   }, [user]);
 
   const loadFromSupabase = useCallback(async () => {
-    if (!user || !isSupabaseConfigured) return null;
+    if (!user || !isSupabaseConfigured || !supabase) return null;
 
     try {
       const [holdingsRes, ppRes, rpRes] = await Promise.all([
@@ -139,20 +123,17 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
         peRatio: h.pe_ratio,
         dividendYield: h.dividend_yield,
         dividendRate: h.dividend_rate,
-        exDivDate: h.ex_div_date,
-        dividendPaymentDate: h.dividend_payment_date,
-        dividendFrequency: h.dividend_frequency,
-        nextEarningsDate: h.next_earnings_date,
-        sector: h.sector,
+        exDivDate: h.ex_div_date || '-',
+        dividendPaymentDate: h.dividend_payment_date || '-',
+        dividendFrequency: h.dividend_frequency || 'quarterly',
+        nextEarningsDate: h.next_earnings_date || '-',
+        sector: h.sector || 'Other',
       })) || [];
-
-      const supabasePP = ppRes.data?.amount;
-      const supabaseRP = rpRes.data?.amount;
 
       return {
         holdings: supabaseHoldings.length > 0 ? supabaseHoldings : null,
-        purchasingPower: supabasePP ?? null,
-        realizedPL: supabaseRP ?? null,
+        purchasingPower: ppRes.data?.amount ?? null,
+        realizedPL: rpRes.data?.amount ?? null,
       };
     } catch (err) {
       console.error('Failed to load from Supabase:', err);
@@ -191,12 +172,6 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     });
   }, []);
 
-  useEffect(() => {
-    if (user && isSupabaseConfigured) {
-      syncToSupabase(holdings, purchasingPower, realizedPL);
-    }
-  }, [holdings, purchasingPower, realizedPL, user, syncToSupabase]);
-
   const fetchWithTimeout = useCallback(async (url: string, timeout = 15000) => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
@@ -217,33 +192,29 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     if (typeof window === 'undefined') return;
     
     setIsLoading(true);
-    setIsSynced(false);
-    
     try {
-      let localHoldings: Holding[] = [];
-      
+      // If signed in, try to load from Supabase first
       if (user && isSupabaseConfigured) {
         const supabaseData = await loadFromSupabase();
-        if (supabaseData) {
-          if (supabaseData.holdings) {
-            setHoldingsState(supabaseData.holdings);
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(supabaseData.holdings));
-          }
+        if (supabaseData && supabaseData.holdings) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(supabaseData.holdings));
           if (supabaseData.purchasingPower !== null) {
-            setPurchasingPowerState(supabaseData.purchasingPower);
             localStorage.setItem(PP_KEY, JSON.stringify(supabaseData.purchasingPower));
+            setPurchasingPowerState(supabaseData.purchasingPower);
           }
           if (supabaseData.realizedPL !== null) {
-            setRealizedPL(supabaseData.realizedPL);
             localStorage.setItem(REALIZED_PL_KEY, JSON.stringify(supabaseData.realizedPL));
+            setRealizedPL(supabaseData.realizedPL);
           }
+          setHoldingsState(supabaseData.holdings);
           setIsLoading(false);
           return;
         }
       }
       
+      // Fall back to localStorage
       const stored = localStorage.getItem(STORAGE_KEY);
-      localHoldings = stored ? JSON.parse(stored) : [];
+      const userHoldings: Holding[] = stored ? JSON.parse(stored) : [];
       
       const storedPP = localStorage.getItem(PP_KEY);
       if (storedPP) {
@@ -256,7 +227,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       }
       
       const symbols = DEFAULT_TICKERS.join(',');
-      const userHoldingsJson = encodeURIComponent(JSON.stringify(localHoldings));
+      const userHoldingsJson = encodeURIComponent(JSON.stringify(userHoldings));
       const res = await fetchWithTimeout(`/api/stock?symbol=${symbols}&summary=true&userHoldings=${userHoldingsJson}`);
       
       if (res.ok) {
@@ -265,10 +236,10 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
         if (data.holdings && data.holdings.length > 0) {
           setHoldings(data.holdings);
         } else {
-          setHoldings(localHoldings);
+          setHoldings(userHoldings);
         }
       } else {
-        setHoldings(localHoldings);
+        setHoldings(userHoldings);
       }
     } catch (err: any) {
       if (err.message !== 'Request timed out') {
@@ -288,8 +259,28 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   }, [user]);
 
   useEffect(() => {
+    const storedPP = localStorage.getItem(PP_KEY);
+    if (storedPP) {
+      setPurchasingPowerState(JSON.parse(storedPP));
+    }
+    
+    const storedRealizedPL = localStorage.getItem(REALIZED_PL_KEY);
+    if (storedRealizedPL) {
+      setRealizedPL(JSON.parse(storedRealizedPL));
+    }
+    
+    refreshHoldings();
+    
     const handleStorageChange = () => {
       refreshHoldings();
+      const storedPP = localStorage.getItem(PP_KEY);
+      if (storedPP) {
+        setPurchasingPowerState(JSON.parse(storedPP));
+      }
+      const storedRealizedPL = localStorage.getItem(REALIZED_PL_KEY);
+      if (storedRealizedPL) {
+        setRealizedPL(JSON.parse(storedRealizedPL));
+      }
     };
     
     const handlePortfolioUpdate = (e: Event) => {
@@ -298,6 +289,14 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
         setHoldings(customEvent.detail.holdings);
       } else {
         refreshHoldings();
+      }
+      const storedPP = localStorage.getItem(PP_KEY);
+      if (storedPP) {
+        setPurchasingPowerState(JSON.parse(storedPP));
+      }
+      const storedRealizedPL = localStorage.getItem(REALIZED_PL_KEY);
+      if (storedRealizedPL) {
+        setRealizedPL(JSON.parse(storedRealizedPL));
       }
     };
     
@@ -320,8 +319,13 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   }, [refreshHoldings, setHoldings]);
 
   const addHoldingFn = useCallback((newHolding: Holding) => {
-    setHoldingsState(prev => addHolding(prev, newHolding));
-  }, []);
+    const updatedHoldings = addHolding(holdings, newHolding);
+    setHoldingsState(updatedHoldings);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedHoldings));
+    }
+    syncToSupabase(updatedHoldings, purchasingPower, realizedPL);
+  }, [holdings, syncToSupabase, purchasingPower, realizedPL]);
 
   const sellFromHoldingFn = useCallback((ticker: string, sharesSold: number, price: number) => {
     const existing = holdings.find(h => h.ticker === ticker);
@@ -329,8 +333,13 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       const realizedGain = (price - existing.avgCost) * sharesSold;
       addRealizedPL(realizedGain);
     }
-    setHoldingsState(prev => sellFromHolding(prev, ticker, sharesSold, price));
-  }, [holdings, addRealizedPL]);
+    const newHoldings = sellFromHolding(holdings, ticker, sharesSold, price);
+    setHoldingsState(newHoldings);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newHoldings));
+    }
+    syncToSupabase(newHoldings, purchasingPower, realizedPL);
+  }, [holdings, addRealizedPL, syncToSupabase, purchasingPower, realizedPL]);
 
   const contextValue = useMemo(() => ({
     holdings,
@@ -344,8 +353,7 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     updatePurchasingPower,
     realizedPL,
     addRealizedPL,
-    isSynced,
-  }), [holdings, isLoading, purchasingPower, setHoldings, addHoldingFn, sellFromHoldingFn, refreshHoldings, setPurchasingPower, updatePurchasingPower, realizedPL, addRealizedPL, isSynced]);
+  }), [holdings, isLoading, purchasingPower, setHoldings, addHoldingFn, sellFromHoldingFn, refreshHoldings, setPurchasingPower, updatePurchasingPower, realizedPL, addRealizedPL]);
 
   return (
     <PortfolioContext.Provider value={contextValue}>
