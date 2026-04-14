@@ -279,8 +279,8 @@ export default function DividendsPage() {
                         }</td>
                         <td className="text-right py-4 px-4 text-white font-mono">{yieldOnCost.toFixed(2)}%</td>
                         <td className="text-right py-4 px-4 text-white font-mono">${annualIncome.toFixed(2)}</td>
-                        <td className="text-right py-4 px-4 text-white font-mono">{holding.exDivDate && holding.exDivDate !== '-' ? holding.exDivDate : 'N/A'}</td>
-                        <td className="text-right py-4 px-4 text-white font-mono">{holding.dividendPaymentDate && holding.dividendPaymentDate !== '-' ? holding.dividendPaymentDate : '-'}</td>
+                        <td className="text-right py-4 px-4 text-white font-mono">{holding.exDivDate && holding.exDivDate !== '-' && holding.exDivDate !== 'TBD' ? holding.exDivDate : 'N/A'}</td>
+                        <td className="text-right py-4 px-4 text-white font-mono">{holding.dividendPaymentDate && holding.dividendPaymentDate !== '-' && holding.dividendPaymentDate !== 'TBD' ? holding.dividendPaymentDate : '-'}</td>
                         <td className="text-right py-4 px-4 text-[#6B7280] font-mono text-xs">{holding.dividendFrequency || 'Q'}</td>
                         <td className="text-right py-4 px-4">
                           {isExpanded ? <ChevronUp className="w-5 h-5 text-[#6B7280] inline" /> : <ChevronDown className="w-5 h-5 text-[#6B7280] inline" />}

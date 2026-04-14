@@ -85,6 +85,10 @@ export async function GET(request: Request) {
   const histOptions: any = { period1: getPeriodStart(period), period2: new Date(), interval: '1d' };
   const history = await yahooFinance.historical(symbol, histOptions).catch(() => []) || [];
 
+  const chartOptions: any = { period1: getPeriodStart('1y'), interval: '1d' };
+  const chartData: any = await yahooFinance.chart(symbol, chartOptions).catch(() => null) || {};
+  const dividendHistory = chartData.events?.dividends || [];
+
   const formatNum = (val: any) => {
     if (val === null || val === undefined || isNaN(val)) return null;
     return typeof val === 'number' ? val : parseFloat(val);
@@ -141,6 +145,20 @@ export async function GET(request: Request) {
     }
   }
   
+  if ((!exDivDate || exDivDate === '-') && dividendHistory.length > 0) {
+    const sortedDividends = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+    const mostRecentDiv = sortedDividends[0];
+    if (mostRecentDiv && mostRecentDiv.date) {
+      const payDate = new Date(mostRecentDiv.date);
+      if (!isNaN(payDate.getTime())) {
+        dividendPaymentDate = payDate.toISOString().split('T')[0];
+        const exDate = new Date(payDate);
+        exDate.setDate(exDate.getDate() - 1);
+        exDivDate = exDate.toISOString().split('T')[0];
+      }
+    }
+  }
+  
   const dividendYield = formatNum(
     summary.yield ? summary.yield * 100 :
     summary.dividendYield ? summary.dividendYield * 100 : 
@@ -148,7 +166,7 @@ export async function GET(request: Request) {
     keyStats.dividendYield ? keyStats.dividendYield * 100 : null
   );
   
-  const dividendRate = formatNum(
+  let dividendRate = formatNum(
     summary.trailingAnnualDividendRate ||
     summary.dividendRate ||
     priceInfo.dividendRate ||
@@ -156,6 +174,14 @@ export async function GET(request: Request) {
     quote.dividendRate ||
     0
   );
+  
+  if (dividendRate === 0 && dividendHistory.length > 0) {
+    const sortedDividends = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+    const mostRecentDiv = sortedDividends[0];
+    if (mostRecentDiv && mostRecentDiv.amount) {
+      dividendRate = mostRecentDiv.amount * 4;
+    }
+  }
 
   try {
     const historyData = Array.isArray(history) ? history.map((h: any) => ({
@@ -263,9 +289,10 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
     const results = await Promise.all(
       allSymbols.map(async (s) => {
         try {
-          const [quote, summaryDetail] = await Promise.all([
+          const [quote, summaryDetail, chartData] = await Promise.all([
             yahooFinance.quote(s),
             yahooFinance.quoteSummary(s, { modules: ['summaryDetail', 'summaryProfile', 'earnings', 'calendarEvents'] }).catch(() => ({})),
+            yahooFinance.chart(s, { period1: getPeriodStart('1y'), interval: '1d' }).catch(() => null),
           ]);
           const holding = allHoldings.find((h: any) => h.ticker === s);
           if (!holding) return null;
@@ -283,6 +310,7 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
           const profile = (summaryDetail as any)?.summaryProfile || {};
           const earnings = (summaryDetail as any)?.earnings || {};
           const calendarEvents = (summaryDetail as any)?.calendarEvents || {};
+          const dividendHistory = chartData?.events?.dividends || [];
           
           const earningsChart = earnings?.earningsChart || {};
           
@@ -315,6 +343,20 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
             }
           }
           
+          if ((!exDivDate || exDivDate === '-') && dividendHistory.length > 0) {
+            const sortedDividends = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+            const mostRecentDiv = sortedDividends[0];
+            if (mostRecentDiv && mostRecentDiv.date) {
+              const payDate = new Date(mostRecentDiv.date);
+              if (!isNaN(payDate.getTime())) {
+                dividendPaymentDate = payDate.toISOString().split('T')[0];
+                const exDate = new Date(payDate);
+                exDate.setDate(exDate.getDate() - 1);
+                exDivDate = exDate.toISOString().split('T')[0];
+              }
+            }
+          }
+          
           if (summary.dividendFrequency) {
             dividendFrequency = summary.dividendFrequency;
           }
@@ -327,6 +369,17 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
             if (val === null || val === undefined || isNaN(val)) return 0;
             return typeof val === 'number' ? val : parseFloat(val);
           };
+          
+          let dividendYield = formatNum(summary.yield ? summary.yield * 100 : summary.dividendYield ? summary.dividendYield * 100 : 0);
+          let dividendRate = formatNum(summary.trailingAnnualDividendRate || summary.dividendRate);
+          
+          if ((dividendRate === 0 || !dividendRate) && dividendHistory.length > 0) {
+            const sortedDividends = [...dividendHistory].sort((a: any, b: any) => b.date - a.date);
+            const mostRecentDiv = sortedDividends[0];
+            if (mostRecentDiv && mostRecentDiv.amount) {
+              dividendRate = mostRecentDiv.amount * 4;
+            }
+          }
           
           return {
             id: s,
@@ -341,8 +394,8 @@ async function handlePortfolioSummaryYahoo(symbols: string[], userHoldings: any[
             totalGain: value - cost,
             totalGainPercent: cost > 0 ? ((value - cost) / cost) * 100 : 0,
             peRatio: formatNum(summary.trailingPE),
-            dividendYield: formatNum(summary.yield ? summary.yield * 100 : summary.dividendYield ? summary.dividendYield * 100 : 0),
-            dividendRate: formatNum(summary.trailingAnnualDividendRate || summary.dividendRate),
+            dividendYield,
+            dividendRate,
             exDivDate,
             dividendPaymentDate,
             dividendFrequency,
