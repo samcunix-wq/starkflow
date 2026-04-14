@@ -31,7 +31,7 @@ export default function DividendsPage() {
   const [goalAmount, setGoalAmount] = useState(10000);
 
   const dividendHoldings = useMemo(() => {
-    return portfolioHoldings.filter(h => (h.dividendYield || 0) > 0);
+    return portfolioHoldings.filter(h => (h.dividendYield || 0) > 0 || (h.dividendRate || 0) > 0);
   }, [portfolioHoldings]);
 
   const metrics = useMemo(() => {
@@ -266,7 +266,13 @@ export default function DividendsPage() {
                           </div>
                         </td>
                         <td className="text-right py-4 px-4 text-white font-mono">{holding.shares}</td>
-                        <td className="text-right py-4 px-4 text-[#10B981] font-mono">{holding.dividendYield?.toFixed(2) || 0}%</td>
+                        <td className="text-right py-4 px-4 text-[#10B981] font-mono">{
+                          (holding.dividendYield || 0) > 0 
+                            ? holding.dividendYield?.toFixed(2) + '%'
+                            : (holding.currentPrice > 0 && (holding.dividendRate || 0) > 0 
+                                ? ((holding.dividendRate / holding.currentPrice) * 100).toFixed(2) + '%'
+                                : 'N/A')
+                        }</td>
                         <td className="text-right py-4 px-4 text-white font-mono">{yieldOnCost.toFixed(2)}%</td>
                         <td className="text-right py-4 px-4 text-white font-mono">${annualIncome.toFixed(0)}</td>
                         <td className="text-right py-4 px-4 text-white font-mono">{holding.exDivDate || 'N/A'}</td>

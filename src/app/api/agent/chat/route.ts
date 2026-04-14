@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 
-const GROQ_API_KEY = process.env.GROQ_API_KEY || '';
+const GROQ_API_KEY = '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';
 const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 const SYSTEM_PROMPT = `You are JARVIS, an intelligent AI financial advisor for StarkFlow.

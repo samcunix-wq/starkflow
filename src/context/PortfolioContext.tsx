@@ -1,6 +1,8 @@
 'use client';
 
 import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react';
+import { supabase, isConfigured as isSupabaseConfigured } from '@/lib/supabase';
+import { useAuth } from '@/context/AuthContext';
 
 export interface Holding {
   id: string;
@@ -47,25 +49,114 @@ const INITIAL_PURCHASING_POWER = 5000;
 const DEFAULT_TICKERS = ['AAPL', 'MSFT', 'GOOGL', 'NVDA', 'TSLA', 'AMZN', 'META', 'JPM', 'V', 'JNJ', 'PG', 'VOO', 'SPY', 'QQQ', 'SCHD', 'VTI', 'VYM', 'HD', 'UNH', 'DIS', 'NFLX', 'KO', 'PEP', 'COST', 'ABBV', 'MRK', 'CVX', 'XOM', 'WMT', 'TMO', 'CSCO', 'ABT', 'AVGO', 'ACN', 'NKE', 'LLY', 'VZ', 'INTC', 'AMD', 'QCOM', 'TXN', 'ADBE', 'CRM', 'ORCL', 'IBM', 'NOW', 'INTU', 'AMAT', 'SBUX', 'PM', 'HON', 'UPS', 'RTX', 'LOW', 'MS', 'GS', 'BLK', 'AXP', 'SPGI', 'MDLZ', 'TGT', 'CAT', 'DE', 'MCD', 'ISRG', 'MDT', 'ZTS', 'SYK', 'BKNG', 'GILD', 'ADP', 'REGN', 'VRTX', 'ADI', 'LRCX', 'MU', 'KLAC', 'AMT', 'CCI', 'PLD', 'EQIX', 'PSA', 'AVB', 'EQR', 'WELL', 'DLR', 'SPG', 'O', 'KIM', 'REG', 'PFE', 'MRNA', 'BION', 'CVS', 'CI', 'HUM', 'CNC', 'MOH', 'ELV', 'HCA', 'THC', 'UHS', 'ABC', 'CAH', 'MCK', 'BDX', 'EW', 'ALGN', 'IDXX', 'IQV', 'INCY', 'TECH', 'RMD', 'STE', 'HOLX', 'WAT', 'DHR', 'BSX', 'GE', 'APH', 'TDG', 'ROK', 'ITW', 'ETN', 'EMR', 'FTV', 'AME', 'DOV', 'FTNT', 'PANW', 'CRWD', 'ZS', 'OKTA', 'NET', 'DDOG', 'SNOW', 'TEAM', 'WDAY', 'HUBS', 'ZM', 'DOCU', 'TWLO', 'SQ', 'SHOP', 'UBER', 'LYFT', 'DASH', 'COIN', 'MSTR', 'HOOD', 'RIVN', 'LCID', 'F', 'GM'];
 
 export function PortfolioProvider({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
   const [holdings, setHoldingsState] = useState<Holding[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [purchasingPower, setPurchasingPowerState] = useState(INITIAL_PURCHASING_POWER);
   const [realizedPL, setRealizedPL] = useState(0);
+
+  const syncToSupabase = useCallback(async (holdingsData: Holding[], pp: number, rp: number) => {
+    if (!user || !isSupabaseConfigured || !supabase) return;
+    
+    try {
+      await supabase
+        .from('holdings')
+        .upsert(
+          holdingsData.map(h => ({
+            user_id: user.id,
+            ticker: h.ticker,
+            name: h.name,
+            shares: h.shares,
+            avg_cost: h.avgCost,
+            current_price: h.currentPrice,
+            change_amount: h.change,
+            change_percent: h.changePercent,
+            total_value: h.totalValue,
+            total_gain: h.totalGain,
+            total_gain_percent: h.totalGainPercent,
+            pe_ratio: h.peRatio,
+            dividend_yield: h.dividendYield,
+            dividend_rate: h.dividendRate,
+            ex_div_date: h.exDivDate,
+            dividend_payment_date: h.dividendPaymentDate,
+            dividend_frequency: h.dividendFrequency,
+            next_earnings_date: h.nextEarningsDate,
+            sector: h.sector,
+          })),
+          { onConflict: 'user_id,ticker' }
+        );
+
+      await supabase
+        .from('purchasing_power')
+        .upsert({ user_id: user.id, amount: pp }, { onConflict: 'user_id' });
+
+      await supabase
+        .from('realized_pl')
+        .upsert({ user_id: user.id, amount: rp }, { onConflict: 'user_id' });
+    } catch (err) {
+      console.error('Supabase sync error:', err);
+    }
+  }, [user]);
+
+  const loadFromSupabase = useCallback(async () => {
+    if (!user || !isSupabaseConfigured || !supabase) return null;
+
+    try {
+      const [holdingsRes, ppRes, rpRes] = await Promise.all([
+        supabase.from('holdings').select('*').eq('user_id', user.id),
+        supabase.from('purchasing_power').select('amount').eq('user_id', user.id).single(),
+        supabase.from('realized_pl').select('amount').eq('user_id', user.id).single(),
+      ]);
+
+      const supabaseHoldings: Holding[] = holdingsRes.data?.map(h => ({
+        id: h.id,
+        ticker: h.ticker,
+        name: h.name,
+        shares: h.shares,
+        avgCost: h.avg_cost,
+        currentPrice: h.current_price,
+        change: h.change_amount,
+        changePercent: h.change_percent,
+        totalValue: h.total_value,
+        totalGain: h.total_gain,
+        totalGainPercent: h.total_gain_percent,
+        peRatio: h.pe_ratio,
+        dividendYield: h.dividend_yield,
+        dividendRate: h.dividend_rate,
+        exDivDate: h.ex_div_date || '-',
+        dividendPaymentDate: h.dividend_payment_date || '-',
+        dividendFrequency: h.dividend_frequency || 'quarterly',
+        nextEarningsDate: h.next_earnings_date || '-',
+        sector: h.sector || 'Other',
+      })) || [];
+
+      return {
+        holdings: supabaseHoldings.length > 0 ? supabaseHoldings : null,
+        purchasingPower: ppRes.data?.amount ?? null,
+        realizedPL: rpRes.data?.amount ?? null,
+      };
+    } catch (err) {
+      console.error('Failed to load from Supabase:', err);
+      return null;
+    }
+  }, [user]);
 
   const setHoldings = useCallback((newHoldings: Holding[]) => {
     setHoldingsState(newHoldings);
     if (typeof window !== 'undefined') {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(newHoldings));
     }
-  }, []);
+    syncToSupabase(newHoldings, purchasingPower, realizedPL);
+  }, [syncToSupabase, purchasingPower, realizedPL]);
 
   const setPurchasingPower = useCallback((value: number) => {
     setPurchasingPowerState(value);
     if (typeof window !== 'undefined') {
       localStorage.setItem(PP_KEY, JSON.stringify(value));
     }
+    syncToSupabase(holdings, value, realizedPL);
     window.dispatchEvent(new CustomEvent('portfolio-updated'));
-  }, []);
+  }, [syncToSupabase, holdings, realizedPL]);
 
   const updatePurchasingPower = useCallback((change: number) => {
     setPurchasingPowerState(prev => prev + change);
@@ -102,8 +193,38 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     
     setIsLoading(true);
     try {
+      // If signed in, try to load from Supabase first
+      if (user && isSupabaseConfigured) {
+        const supabaseData = await loadFromSupabase();
+        if (supabaseData && supabaseData.holdings) {
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(supabaseData.holdings));
+          if (supabaseData.purchasingPower !== null) {
+            localStorage.setItem(PP_KEY, JSON.stringify(supabaseData.purchasingPower));
+            setPurchasingPowerState(supabaseData.purchasingPower);
+          }
+          if (supabaseData.realizedPL !== null) {
+            localStorage.setItem(REALIZED_PL_KEY, JSON.stringify(supabaseData.realizedPL));
+            setRealizedPL(supabaseData.realizedPL);
+          }
+          setHoldingsState(supabaseData.holdings);
+          setIsLoading(false);
+          return;
+        }
+      }
+      
+      // Fall back to localStorage
       const stored = localStorage.getItem(STORAGE_KEY);
       const userHoldings: Holding[] = stored ? JSON.parse(stored) : [];
+      
+      const storedPP = localStorage.getItem(PP_KEY);
+      if (storedPP) {
+        setPurchasingPowerState(JSON.parse(storedPP));
+      }
+      
+      const storedRealizedPL = localStorage.getItem(REALIZED_PL_KEY);
+      if (storedRealizedPL) {
+        setRealizedPL(JSON.parse(storedRealizedPL));
+      }
       
       const symbols = DEFAULT_TICKERS.join(',');
       const userHoldingsJson = encodeURIComponent(JSON.stringify(userHoldings));
@@ -131,7 +252,11 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  }, [fetchWithTimeout, setHoldings]);
+  }, [fetchWithTimeout, setHoldings, loadFromSupabase, user]);
+
+  useEffect(() => {
+    refreshHoldings();
+  }, [user]);
 
   useEffect(() => {
     const storedPP = localStorage.getItem(PP_KEY);
@@ -203,8 +328,13 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
       const realizedGain = (price - existing.avgCost) * sharesSold;
       addRealizedPL(realizedGain);
     }
-    setHoldingsState(prev => sellFromHolding(prev, ticker, sharesSold, price));
-  }, [holdings, addRealizedPL]);
+    const newHoldings = sellFromHolding(holdings, ticker, sharesSold, price);
+    setHoldingsState(newHoldings);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(newHoldings));
+    }
+    syncToSupabase(newHoldings, purchasingPower, realizedPL);
+  }, [holdings, addRealizedPL, syncToSupabase, purchasingPower, realizedPL]);
 
   const contextValue = useMemo(() => ({
     holdings,
