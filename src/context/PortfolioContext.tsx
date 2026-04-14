@@ -319,8 +319,13 @@ export function PortfolioProvider({ children }: { children: ReactNode }) {
   }, [refreshHoldings, setHoldings]);
 
   const addHoldingFn = useCallback((newHolding: Holding) => {
-    setHoldingsState(prev => addHolding(prev, newHolding));
-  }, []);
+    const updatedHoldings = addHolding(holdings, newHolding);
+    setHoldingsState(updatedHoldings);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(updatedHoldings));
+    }
+    syncToSupabase(updatedHoldings, purchasingPower, realizedPL);
+  }, [holdings, syncToSupabase, purchasingPower, realizedPL]);
 
   const sellFromHoldingFn = useCallback((ticker: string, sharesSold: number, price: number) => {
     const existing = holdings.find(h => h.ticker === ticker);

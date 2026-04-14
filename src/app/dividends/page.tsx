@@ -248,8 +248,12 @@ export default function DividendsPage() {
               </thead>
               <tbody>
                 {dividendHoldings.map((holding) => {
-                  const annualIncome = (holding.dividendRate || 0) * holding.shares;
-                  const yieldOnCost = holding.avgCost > 0 ? ((holding.dividendRate || 0) * holding.shares / (holding.shares * holding.avgCost)) * 100 : 0;
+                  const calculatedRate = (holding.dividendYield && holding.currentPrice)
+                    ? (holding.dividendYield / 100) * holding.currentPrice
+                    : 0;
+                  const effectiveRate = (holding.dividendRate || calculatedRate);
+                  const annualIncome = effectiveRate * holding.shares;
+                  const yieldOnCost = holding.avgCost > 0 ? (effectiveRate * holding.shares / (holding.shares * holding.avgCost)) * 100 : 0;
                   const isExpanded = expandedRow === holding.ticker;
 
                   return (
@@ -269,14 +273,14 @@ export default function DividendsPage() {
                         <td className="text-right py-4 px-4 text-[#10B981] font-mono">{
                           (holding.dividendYield || 0) > 0 
                             ? holding.dividendYield?.toFixed(2) + '%'
-                            : (holding.currentPrice > 0 && (holding.dividendRate || 0) > 0 
-                                ? ((holding.dividendRate / holding.currentPrice) * 100).toFixed(2) + '%'
-                                : 'N/A')
+                            : effectiveRate > 0 && holding.currentPrice > 0
+                                ? ((effectiveRate / holding.currentPrice) * 100).toFixed(2) + '%'
+                                : 'N/A'
                         }</td>
                         <td className="text-right py-4 px-4 text-white font-mono">{yieldOnCost.toFixed(2)}%</td>
-                        <td className="text-right py-4 px-4 text-white font-mono">${annualIncome.toFixed(0)}</td>
-                        <td className="text-right py-4 px-4 text-white font-mono">{holding.exDivDate || 'N/A'}</td>
-                        <td className="text-right py-4 px-4 text-white font-mono">{holding.dividendPaymentDate || '-'}</td>
+                        <td className="text-right py-4 px-4 text-white font-mono">${annualIncome.toFixed(2)}</td>
+                        <td className="text-right py-4 px-4 text-white font-mono">{holding.exDivDate && holding.exDivDate !== '-' ? holding.exDivDate : 'N/A'}</td>
+                        <td className="text-right py-4 px-4 text-white font-mono">{holding.dividendPaymentDate && holding.dividendPaymentDate !== '-' ? holding.dividendPaymentDate : '-'}</td>
                         <td className="text-right py-4 px-4 text-[#6B7280] font-mono text-xs">{holding.dividendFrequency || 'Q'}</td>
                         <td className="text-right py-4 px-4">
                           {isExpanded ? <ChevronUp className="w-5 h-5 text-[#6B7280] inline" /> : <ChevronDown className="w-5 h-5 text-[#6B7280] inline" />}
@@ -292,7 +296,7 @@ export default function DividendsPage() {
                               </div>
                               <div>
                                 <p className="text-xs text-[#6B7280] mb-1">Dividend Rate</p>
-                                <p className="text-white font-mono">${(holding.dividendRate || 0).toFixed(2)}/share</p>
+                                <p className="text-white font-mono">${effectiveRate.toFixed(3)}/share</p>
                               </div>
                               <div>
                                 <p className="text-xs text-[#6B7280] mb-1">Cost Basis</p>
